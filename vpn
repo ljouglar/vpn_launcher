@@ -301,8 +301,16 @@ disconnect_one() {
         sudo kill -INT "$pid" 2>/dev/null
         sleep 2
         if [ -d "/proc/$pid" ]; then
+            log "Process still running, sending SIGKILL..." "$YELLOW"
             sudo kill -9 "$pid" 2>/dev/null
             sleep 1
+            
+            # Vérifier que le processus est VRAIMENT mort
+            if [ -d "/proc/$pid" ]; then
+                log "❌ ERREUR: Impossible de tuer le processus $pid" "$RED"
+                log "💡 Le processus pourrait avoir des permissions spéciales" "$YELLOW"
+                return 1
+            fi
         fi
         
         # Nettoyer toute session orpheline qui pourrait pointer vers ce PID
@@ -313,6 +321,17 @@ disconnect_one() {
                 rm -f "$session_file"
             fi
         done
+        
+        # Attendre un peu et vérifier si les interfaces ppp ont été nettoyées
+        sleep 1
+        local remaining_ppp=$(ip -o link show type ppp 2>/dev/null | wc -l)
+        if [ "$remaining_ppp" -gt 0 ]; then
+            local active_vpns=$(ps aux | grep -E "[o]penfortivpn" | wc -l)
+            if [ "$active_vpns" -eq 0 ]; then
+                log "⚠️  Attention: $remaining_ppp interface(s) ppp restante(s) sans processus VPN" "$YELLOW"
+                log "💡 Vous pouvez les nettoyer avec: sudo ip link delete <interface>" "$BLUE"
+            fi
+        fi
         
         log "✅ Processus déconnecté" "$GREEN"
         return 0
@@ -332,12 +351,34 @@ disconnect_one() {
         sudo kill -INT "$pid" 2>/dev/null
         sleep 2
         if [ -d "/proc/$pid" ]; then
+            log "Process still running, sending SIGKILL..." "$YELLOW"
             sudo kill -9 "$pid" 2>/dev/null
             sleep 1
+            
+            # Vérifier que le processus est VRAIMENT mort
+            if [ -d "/proc/$pid" ]; then
+                log "❌ ERREUR: Impossible de tuer le processus $pid" "$RED"
+                log "⚠️  Le fichier de session est conservé" "$YELLOW"
+                log "💡 Utilisez 'sudo kill -9 $pid' manuellement" "$BLUE"
+                return 1
+            fi
         fi
     fi
 
+    # Ne supprimer la session que si le processus est vraiment mort
     rm -f "$session_file"
+    
+    # Attendre un peu et vérifier si les interfaces ppp ont été nettoyées
+    sleep 1
+    local remaining_ppp=$(ip -o link show type ppp 2>/dev/null | wc -l)
+    if [ "$remaining_ppp" -gt 0 ]; then
+        local active_vpns=$(ps aux | grep -E "[o]penfortivpn" | wc -l)
+        if [ "$active_vpns" -eq 0 ]; then
+            log "⚠️  Attention: $remaining_ppp interface(s) ppp restante(s) sans processus VPN" "$YELLOW"
+            log "💡 Vous pouvez les nettoyer avec: sudo ip link delete <interface>" "$BLUE"
+        fi
+    fi
+    
     log "✅ $vpn_id déconnecté" "$GREEN"
 }
 

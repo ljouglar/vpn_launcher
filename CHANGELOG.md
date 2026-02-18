@@ -26,15 +26,20 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   - Essaie également Firefox, Chrome, Chromium si disponibles
   - Message d'information si l'ouverture automatique échoue
 
+### Corrigé
+- **Déconnexion robuste** : Vérification que le processus est vraiment tué
+  - Le fichier de session n'est supprimé que si le processus est confirmé mort
+  - Message d'erreur si le processus ne peut pas être tué
+  - Évite la création de VPNs orphelins lors de la déconnexion
+- Détection et avertissement pour les interfaces ppp orphelines après déconnexion
+- Synchronisation entre l'état réel des VPNs et les fichiers de session
+- Les VPNs connectés en dehors du script sont maintenant visibles et gérables
+
 ### Modifié
 - `install.sh` crée maintenant un lien symbolique `~/vpn` au lieu de copier le script
   - Permet les mises à jour automatiques via `git pull`
   - Facilite le développement et les contributions
   - Documentation mise à jour en conséquence
-
-### Corrigé
-- Synchronisation entre l'état réel des VPNs et les fichiers de session
-- Les VPNs connectés en dehors du script sont maintenant visibles et gérables
 
 ## [1.0.0] - 2026-02-18
 
