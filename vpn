@@ -298,12 +298,26 @@ disconnect_one() {
         fi
         
         log "🔌 Déconnexion du processus (PID: $pid)..." "$YELLOW"
-        sudo kill -INT "$pid" 2>/dev/null
-        sleep 2
+        
+        # Tuer les processus enfants d'abord
+        local children=$(pgrep -P "$pid" 2>/dev/null)
+        if [ -n "$children" ]; then
+            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        fi
+        
+        # Envoyer SIGTERM au processus principal
+        sudo kill -TERM "$pid" 2>/dev/null
+        sleep 3
+        
         if [ -d "/proc/$pid" ]; then
-            log "Process still running, sending SIGKILL..." "$YELLOW"
+            log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
+            # Tuer les enfants avec SIGKILL
+            if [ -n "$children" ]; then
+                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            fi
+            # Tuer le parent avec SIGKILL
             sudo kill -9 "$pid" 2>/dev/null
-            sleep 1
+            sleep 2
             
             # Vérifier que le processus est VRAIMENT mort
             if [ -d "/proc/$pid" ]; then
@@ -348,12 +362,26 @@ disconnect_one() {
     local pid=$(cat "$session_file" 2>/dev/null)
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
         log "🔌 Déconnexion de $vpn_id (PID: $pid)..." "$YELLOW"
-        sudo kill -INT "$pid" 2>/dev/null
-        sleep 2
+        
+        # Tuer les processus enfants d'abord
+        local children=$(pgrep -P "$pid" 2>/dev/null)
+        if [ -n "$children" ]; then
+            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        fi
+        
+        # Envoyer SIGTERM au processus principal
+        sudo kill -TERM "$pid" 2>/dev/null
+        sleep 3
+        
         if [ -d "/proc/$pid" ]; then
-            log "Process still running, sending SIGKILL..." "$YELLOW"
+            log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
+            # Tuer les enfants avec SIGKILL
+            if [ -n "$children" ]; then
+                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            fi
+            # Tuer le parent avec SIGKILL
             sudo kill -9 "$pid" 2>/dev/null
-            sleep 1
+            sleep 2
             
             # Vérifier que le processus est VRAIMENT mort
             if [ -d "/proc/$pid" ]; then
@@ -658,10 +686,12 @@ connect() {
         log "🔐 Ce VPN utilise l'authentification SSO (SAML)" "$YELLOW"
         echo ""
 
-        local saml_cmd="openfortivpn $saml_host --saml-login"
-        [ -n "$saml_cert" ] && saml_cmd="$saml_cmd --trusted-cert $saml_cert"
-
-        sudo -b bash -c "$saml_cmd > \"$vpn_log\" 2>&1"
+        # Lancer openfortivpn en background
+        if [ -n "$saml_cert" ]; then
+            sudo -b openfortivpn "$saml_host" --saml-login --trusted-cert "$saml_cert" > "$vpn_log" 2>&1
+        else
+            sudo -b openfortivpn "$saml_host" --saml-login > "$vpn_log" 2>&1
+        fi
         sleep 1
         local vpn_pid=$(pgrep -n -f "openfortivpn.*$saml_host" 2>/dev/null)
 
