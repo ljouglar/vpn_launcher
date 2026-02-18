@@ -269,11 +269,53 @@ disconnect() {
         return 1
     fi
 
+    # Si un argument est fourni (ID ou numéro)
+    if [ -n "$target" ]; then
+        # Vérifier si c'est "all" pour tout déconnecter
+        if [[ "$target" = "all" || "$target" = "a" ]]; then
+            for vpn_id in "${connected_vpns[@]}"; do
+                disconnect_one "$vpn_id"
+            done
+            return
+        fi
+        
+        # Si c'est un numéro, convertir en ID
+        if [[ "$target" =~ ^[0-9]+$ ]]; then
+            if [ "$target" -ge 1 ] && [ "$target" -le ${#connected_vpns[@]} ]; then
+                disconnect_one "${connected_vpns[$((target - 1))]}"
+                return
+            else
+                log "❌ Numéro invalide: $target (VPNs connectés: ${#connected_vpns[@]})" "$RED"
+                return 1
+            fi
+        fi
+        
+        # Sinon, c'est un ID de VPN
+        # Vérifier que ce VPN est bien connecté
+        local found=false
+        for vpn_id in "${connected_vpns[@]}"; do
+            if [ "$vpn_id" = "$target" ]; then
+                found=true
+                break
+            fi
+        done
+        
+        if [ "$found" = true ]; then
+            disconnect_one "$target"
+            return
+        else
+            log "❌ VPN '$target' n'est pas connecté" "$RED"
+            return 1
+        fi
+    fi
+
+    # Mode interactif : si un seul VPN connecté, le déconnecter directement
     if [ ${#connected_vpns[@]} -eq 1 ]; then
         disconnect_one "${connected_vpns[0]}"
         return
     fi
 
+    # Mode interactif : plusieurs VPNs connectés
     echo -e "${BLUE}VPNs actuellement connectés :${NC}"
     local idx=1
     for vpn_id in "${connected_vpns[@]}"; do
@@ -607,12 +649,16 @@ case "${1:-menu}" in
         echo "Usage: vpn [commande] [options]"
         echo ""
         echo "Commandes:"
-        echo "  connect [1-$(vpn_count)]   Se connecter à un VPN (cumulable)"
-        echo "  disconnect        Se déconnecter (choix interactif si plusieurs)"
-        echo "  status            Afficher le statut de tous les VPNs actifs"
-        echo "  list              Lister les VPNs disponibles"
-        echo "  menu              Menu interactif (par défaut)"
-        echo "  help              Afficher cette aide"
+        echo "  connect [1-$(vpn_count)]      Se connecter à un VPN (cumulable)"
+        echo "  disconnect [id|numéro|all]    Se déconnecter d'un VPN spécifique"
+        echo "                                 - Sans argument : menu interactif"
+        echo "                                 - ID du VPN : ex. 'koesio-sso'"
+        echo "                                 - Numéro : ex. '1' (premier connecté)"
+        echo "                                 - 'all' : tout déconnecter"
+        echo "  status                        Afficher le statut de tous les VPNs actifs"
+        echo "  list                          Lister les VPNs disponibles"
+        echo "  menu                          Menu interactif (par défaut)"
+        echo "  help                          Afficher cette aide"
         echo ""
         echo "Multi-VPN:"
         echo "  Les VPNs routant vers des réseaux différents peuvent"
@@ -622,10 +668,13 @@ case "${1:-menu}" in
         echo "  $VPN_CONF"
         echo ""
         echo "Exemples:"
-        echo "  vpn              # Menu interactif"
-        echo "  vpn connect 1    # Se connecter au premier VPN"
-        echo "  vpn status       # Voir tous les VPNs actifs"
-        echo "  vpn disconnect   # Se déconnecter (choix si plusieurs)"
+        echo "  vpn                      # Menu interactif"
+        echo "  vpn connect 1            # Se connecter au premier VPN"
+        echo "  vpn status               # Voir tous les VPNs actifs"
+        echo "  vpn disconnect           # Déconnexion interactive"
+        echo "  vpn disconnect koesio-sso  # Déconnecter un VPN spécifique"
+        echo "  vpn disconnect 2         # Déconnecter le 2e VPN connecté"
+        echo "  vpn disconnect all       # Tout déconnecter"
         ;;
     *)
         log "❌ Commande inconnue: $1" "$RED"

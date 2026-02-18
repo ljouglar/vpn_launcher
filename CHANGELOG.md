@@ -8,6 +8,11 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [Unreleased]
 
 ### Ajouté
+- Déconnexion en ligne de commande avec arguments
+  - `vpn disconnect <id>` : déconnexion par ID de VPN (ex: `vpn disconnect koesio-sso`)
+  - `vpn disconnect <numéro>` : déconnexion par position (ex: `vpn disconnect 1`)
+  - `vpn disconnect all` : déconnexion de tous les VPNs
+  - Mode interactif conservé si aucun argument fourni
 - Ouverture automatique du navigateur pour l'authentification SAML
   - Utilise `xdg-open` (standard Linux) avec fallbacks pour GNOME, KDE
   - Essaie également Firefox, Chrome, Chromium si disponibles
