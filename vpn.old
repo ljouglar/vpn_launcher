@@ -1,0 +1,1127 @@
+#!/bin/bash
+# Script de gestion VPN - Connexion multi-VPN via openfortivpn
+# Configuration dans ~/.vpn/vpns.conf (format INI)
+# Usage: vpn [connect|disconnect|status|list|help]
+
+set -o pipefail
+
+# === Chemins ===
+VPN_DIR="$HOME/.vpn"
+VPN_CONF="$VPN_DIR/vpns.conf"
+CONFIG_DIR="$VPN_DIR/configs"
+LOG_DIR="$VPN_DIR/logs"
+SESSION_DIR="$VPN_DIR/sessions"
+
+mkdir -p "$LOG_DIR" "$SESSION_DIR"
+
+# === Couleurs ===
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# === Timeouts par défaut par mode d'auth ===
+declare -A DEFAULT_TIMEOUTS
+DEFAULT_TIMEOUTS[password]=20
+DEFAULT_TIMEOUTS[2fa]=30
+DEFAULT_TIMEOUTS[saml]=60
+
+# ============================================================
+#  Parseur INI générique (pur bash, aucune dépendance)
+# ============================================================
+
+# Liste ordonnée des IDs de VPN (ordre du fichier)
+VPN_IDS=()
+
+# Tableaux associatifs : VPN_PROP[id.clé] = valeur
+declare -A VPN_PROP
+
+# Charger la configuration INI
+load_config() {
+    if [ ! -f "$VPN_CONF" ]; then
+        echo -e "${RED}❌ Fichier de configuration introuvable: $VPN_CONF${NC}" >&2
+        exit 1
+    fi
+
+    local current_section=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Ignorer lignes vides et commentaires
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+        # Détecter une section [nom]
+        if [[ "$line" =~ ^\[([a-zA-Z0-9_-]+)\]$ ]]; then
+            current_section="${BASH_REMATCH[1]}"
+            VPN_IDS+=("$current_section")
+            continue
+        fi
+
+        # Lire clé = valeur
+        if [[ -n "$current_section" && "$line" =~ ^[[:space:]]*([a-zA-Z0-9_]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local value="${BASH_REMATCH[2]}"
+            # Supprimer les espaces en fin de valeur
+            value="${value%"${value##*[![:space:]]}"}"
+            VPN_PROP["${current_section}.${key}"]="$value"
+        fi
+    done < "$VPN_CONF"
+
+    if [ ${#VPN_IDS[@]} -eq 0 ]; then
+        echo -e "${RED}❌ Aucun VPN défini dans $VPN_CONF${NC}" >&2
+        exit 1
+    fi
+}
+
+# Accéder à une propriété d'un VPN (avec valeur par défaut optionnelle)
+vpn_get() {
+    local id="$1" key="$2" default="${3:-}"
+    local value="${VPN_PROP["${id}.${key}"]}"
+    echo "${value:-$default}"
+}
+
+# Nombre de VPNs configurés
+vpn_count() {
+    echo "${#VPN_IDS[@]}"
+}
+
+# ID du VPN à l'index donné (1-based)
+vpn_id_at() {
+    local index=$(( $1 - 1 ))
+    echo "${VPN_IDS[$index]}"
+}
+
+# Index (1-based) d'un VPN par son id, retourne "" si non trouvé
+vpn_index_of() {
+    local target="$1"
+    for i in "${!VPN_IDS[@]}"; do
+        if [ "${VPN_IDS[$i]}" = "$target" ]; then
+            echo $(( i + 1 ))
+            return
+        fi
+    done
+}
+
+# ============================================================
+#  Fonctions utilitaires
+# ============================================================
+
+log() {
+    echo -e "${2}$1${NC}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_DIR/vpn.log"
+}
+
+open_browser() {
+    local url="$1"
+    
+    # Essayer différentes commandes pour ouvrir le navigateur
+    # xdg-open est le standard sur Linux (fonctionne avec GNOME, KDE, XFCE, etc.)
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$url" &> /dev/null &
+        return 0
+    elif command -v gnome-open &> /dev/null; then
+        gnome-open "$url" &> /dev/null &
+        return 0
+    elif command -v kde-open &> /dev/null; then
+        kde-open "$url" &> /dev/null &
+        return 0
+    elif command -v firefox &> /dev/null; then
+        firefox "$url" &> /dev/null &
+        return 0
+    elif command -v google-chrome &> /dev/null; then
+        google-chrome "$url" &> /dev/null &
+        return 0
+    elif command -v chromium &> /dev/null; then
+        chromium "$url" &> /dev/null &
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ============================================================
+#  Gestion de session / statut
+# ============================================================
+
+is_vpn_connected() {
+    local vpn_id="$1"
+    local session_file="$SESSION_DIR/.session_${vpn_id}"
+
+    if [ ! -f "$session_file" ]; then
+        return 1
+    fi
+
+    local pid=$(cat "$session_file" 2>/dev/null)
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        return 0
+    fi
+
+    rm -f "$session_file"
+    return 1
+}
+
+get_connected_vpns() {
+    local connected=0
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local vpn_id=$(basename "$session_file" | sed 's/^.session_//')
+        local pid=$(cat "$session_file" 2>/dev/null)
+
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
+
+            # Chercher une interface ppp active
+            local ppp_if=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | sed -n "$((connected+1))p")
+            local ip=""
+            if [ -n "$ppp_if" ] && ip a show "$ppp_if" &>/dev/null; then
+                ip=$(ip a show "$ppp_if" | grep "inet " | awk '{print $2}' | cut -d'/' -f1)
+            fi
+
+            if [ -n "$ip" ]; then
+                log "✅ $display_name (PID: $pid, IP: $ip)" "$GREEN"
+            else
+                log "✅ $display_name (PID: $pid)" "$GREEN"
+            fi
+            connected=$((connected + 1))
+        else
+            rm -f "$session_file"
+        fi
+    done
+
+    return $connected
+}
+
+check_untracked_vpns() {
+    # Récupérer les PIDs trackés
+    local tracked_pids=()
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        [ -n "$pid" ] && tracked_pids+=("$pid")
+    done
+
+    # Chercher les processus openfortivpn non trackés
+    local untracked=0
+    while IFS= read -r line; do
+        local pid=$(echo "$line" | awk '{print $2}')
+        
+        # Vérifier si ce PID est tracké
+        local is_tracked=false
+        for tracked in "${tracked_pids[@]}"; do
+            if [ "$tracked" = "$pid" ]; then
+                is_tracked=true
+                break
+            fi
+        done
+        
+        if [ "$is_tracked" = false ]; then
+            # Récupérer des infos sur ce processus
+            local cmd=$(ps -p "$pid" -o args= 2>/dev/null)
+            local ppp_if=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | tail -n 1)
+            local ip=""
+            if [ -n "$ppp_if" ] && ip a show "$ppp_if" &>/dev/null; then
+                ip=$(ip a show "$ppp_if" | grep "inet " | awk '{print $2}' | cut -d'/' -f1)
+            fi
+            
+            if [ -n "$ip" ]; then
+                log "⚠️  VPN non tracké (PID: $pid, IP: $ip)" "$YELLOW"
+            else
+                log "⚠️  VPN non tracké (PID: $pid)" "$YELLOW"
+            fi
+            echo "   Commande: $cmd" | head -c 80
+            echo ""
+            untracked=$((untracked + 1))
+        fi
+    done < <(ps aux | grep -E "[o]penfortivpn" | awk '$11 == "openfortivpn" {print}')
+    
+    return $untracked
+}
+
+check_status() {
+    local connected=0
+    local has_sessions=false
+
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        has_sessions=true
+        break
+    done
+
+    if [ "$has_sessions" = true ]; then
+        get_connected_vpns
+        connected=$?
+    fi
+
+    # Vérifier les VPNs non trackés
+    check_untracked_vpns
+    local untracked=$?
+
+    if [ $connected -eq 0 ] && [ $untracked -eq 0 ]; then
+        log "❌ Aucune connexion VPN active" "$RED"
+        return 1
+    fi
+
+    if [ $untracked -gt 0 ]; then
+        echo ""
+        echo -e "${YELLOW}💡 Astuce: Utilisez 'vpn disconnect <pid>' pour déconnecter un VPN non tracké${NC}"
+    fi
+
+    return 0
+}
+
+# ============================================================
+#  Déconnexion
+# ============================================================
+
+disconnect_one() {
+    local vpn_id="$1"
+    
+    # Si c'est un PID (nombre uniquement), déconnexion directe
+    if [[ "$vpn_id" =~ ^[0-9]+$ ]]; then
+        local pid="$vpn_id"
+        if [ ! -d "/proc/$pid" ]; then
+            log "❌ Aucun processus avec le PID $pid" "$RED"
+            return 1
+        fi
+        
+        # Vérifier que c'est bien un processus openfortivpn
+        if ! ps -p "$pid" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
+            log "❌ Le PID $pid n'est pas un processus openfortivpn" "$RED"
+            return 1
+        fi
+        
+        log "🔌 Déconnexion du processus (PID: $pid)..." "$YELLOW"
+        
+        # Tuer les processus enfants d'abord
+        local children=$(pgrep -P "$pid" 2>/dev/null)
+        if [ -n "$children" ]; then
+            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        fi
+        
+        # Envoyer SIGTERM au processus principal
+        sudo kill -TERM "$pid" 2>/dev/null
+        sleep 3
+        
+        if [ -d "/proc/$pid" ]; then
+            log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
+            # Tuer les enfants avec SIGKILL
+            if [ -n "$children" ]; then
+                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            fi
+            # Tuer le parent avec SIGKILL
+            sudo kill -9 "$pid" 2>/dev/null
+            sleep 2
+            
+            # Vérifier que le processus est VRAIMENT mort
+            if [ -d "/proc/$pid" ]; then
+                log "❌ ERREUR: Impossible de tuer le processus $pid" "$RED"
+                log "💡 Le processus pourrait avoir des permissions spéciales" "$YELLOW"
+                return 1
+            fi
+        fi
+        
+        # Nettoyer toute session orpheline qui pourrait pointer vers ce PID
+        for session_file in "$SESSION_DIR"/.session_*; do
+            [ -f "$session_file" ] || continue
+            local session_pid=$(cat "$session_file" 2>/dev/null)
+            if [ "$session_pid" = "$pid" ]; then
+                rm -f "$session_file"
+            fi
+        done
+        
+        # Attendre un peu et vérifier si les interfaces ppp ont été nettoyées
+        sleep 1
+        local remaining_ppp=$(ip -o link show type ppp 2>/dev/null | wc -l)
+        if [ "$remaining_ppp" -gt 0 ]; then
+            local active_vpns=$(ps aux | grep -E "[o]penfortivpn" | wc -l)
+            if [ "$active_vpns" -eq 0 ]; then
+                log "⚠️  Attention: $remaining_ppp interface(s) ppp restante(s) sans processus VPN" "$YELLOW"
+                log "💡 Vous pouvez les nettoyer avec: sudo ip link delete <interface>" "$BLUE"
+            fi
+        fi
+        
+        log "✅ Processus déconnecté" "$GREEN"
+        return 0
+    fi
+    
+    # Sinon, c'est un ID de VPN normal
+    local session_file="$SESSION_DIR/.session_${vpn_id}"
+
+    if [ ! -f "$session_file" ]; then
+        log "❌ $vpn_id n'est pas connecté" "$RED"
+        return 1
+    fi
+
+    local pid=$(cat "$session_file" 2>/dev/null)
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        log "🔌 Déconnexion de $vpn_id (PID: $pid)..." "$YELLOW"
+        
+        # Tuer les processus enfants d'abord
+        local children=$(pgrep -P "$pid" 2>/dev/null)
+        if [ -n "$children" ]; then
+            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        fi
+        
+        # Envoyer SIGTERM au processus principal
+        sudo kill -TERM "$pid" 2>/dev/null
+        sleep 3
+        
+        if [ -d "/proc/$pid" ]; then
+            log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
+            # Tuer les enfants avec SIGKILL
+            if [ -n "$children" ]; then
+                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            fi
+            # Tuer le parent avec SIGKILL
+            sudo kill -9 "$pid" 2>/dev/null
+            sleep 2
+            
+            # Vérifier que le processus est VRAIMENT mort
+            if [ -d "/proc/$pid" ]; then
+                log "❌ ERREUR: Impossible de tuer le processus $pid" "$RED"
+                log "⚠️  Le fichier de session est conservé" "$YELLOW"
+                log "💡 Utilisez 'sudo kill -9 $pid' manuellement" "$BLUE"
+                return 1
+            fi
+        fi
+    fi
+
+    # Ne supprimer la session que si le processus est vraiment mort
+    rm -f "$session_file"
+    
+    # Attendre un peu et vérifier si les interfaces ppp ont été nettoyées
+    sleep 1
+    local remaining_ppp=$(ip -o link show type ppp 2>/dev/null | wc -l)
+    if [ "$remaining_ppp" -gt 0 ]; then
+        local active_vpns=$(ps aux | grep -E "[o]penfortivpn" | wc -l)
+        if [ "$active_vpns" -eq 0 ]; then
+            log "⚠️  Attention: $remaining_ppp interface(s) ppp restante(s) sans processus VPN" "$YELLOW"
+            log "💡 Vous pouvez les nettoyer avec: sudo ip link delete <interface>" "$BLUE"
+        fi
+    fi
+    
+    log "✅ $vpn_id déconnecté" "$GREEN"
+}
+
+cleanup_orphans() {
+    local cleaned=0
+    
+    echo ""
+    log "🧹 Nettoyage des processus et interfaces orphelins..." "$BLUE"
+    
+    # 1. Nettoyer les processus openfortivpn orphelins (non trackés)
+    local tracked_pids=()
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        [ -n "$pid" ] && tracked_pids+=("$pid")
+    done
+    
+    while IFS= read -r line; do
+        local pid=$(echo "$line" | awk '{print $2}')
+        
+        # Vérifier si ce PID est tracké
+        local is_tracked=false
+        for tracked in "${tracked_pids[@]}"; do
+            if [ "$tracked" = "$pid" ]; then
+                is_tracked=true
+                break
+            fi
+        done
+        
+        if [ "$is_tracked" = false ]; then
+            log "  Arrêt du processus orphelin (PID: $pid)..." "$YELLOW"
+            sudo kill -9 "$pid" 2>/dev/null
+            sleep 0.5
+            if ! [ -d "/proc/$pid" ]; then
+                cleaned=$((cleaned + 1))
+            fi
+        fi
+    done < <(ps aux | grep -E "[o]penfortivpn" 2>/dev/null || true)
+    
+    # 2. Nettoyer les interfaces ppp orphelines
+    sleep 1
+    local active_vpns=$(ps aux | grep -E "[o]penfortivpn" 2>/dev/null | wc -l)
+    if [ "$active_vpns" -eq 0 ]; then
+        while IFS= read -r ppp_if; do
+            log "  Suppression de l'interface orpheline: $ppp_if" "$YELLOW"
+            sudo ip link delete "$ppp_if" 2>/dev/null && cleaned=$((cleaned + 1))
+        done < <(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' || true)
+    fi
+    
+    # 3. Nettoyer les fichiers de session orphelins
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        if [ -n "$pid" ] && ! [ -d "/proc/$pid" ]; then
+            log "  Nettoyage de la session orpheline: $(basename "$session_file")" "$YELLOW"
+            rm -f "$session_file"
+            cleaned=$((cleaned + 1))
+        fi
+    done
+    
+    echo ""
+    if [ "$cleaned" -gt 0 ]; then
+        log "✅ Nettoyage terminé ($cleaned éléments nettoyés)" "$GREEN"
+    else
+        log "✅ Rien à nettoyer" "$GREEN"
+    fi
+    
+    return "$cleaned"
+}
+
+disconnect() {
+    local target="$1"
+
+    local connected_vpns=()
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local vpn_id=$(basename "$session_file" | sed 's/^.session_//')
+        local pid=$(cat "$session_file" 2>/dev/null)
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            connected_vpns+=("$vpn_id")
+        else
+            rm -f "$session_file"
+        fi
+    done
+
+    # Si un argument est fourni (ID, numéro, ou PID)
+    if [ -n "$target" ]; then
+        # Vérifier si c'est "all" pour tout déconnecter
+        if [[ "$target" = "all" || "$target" = "a" ]]; then
+            for vpn_id in "${connected_vpns[@]}"; do
+                disconnect_one "$vpn_id"
+            done
+            
+            # Aussi déconnecter tous les VPNs non trackés
+            while IFS= read -r line; do
+                local pid=$(echo "$line" | awk '{print $2}')
+                disconnect_one "$pid"
+            done < <(ps aux | grep -E "[o]penfortivpn")
+            
+            return
+        fi
+        
+        # Si c'est un nombre, vérifier d'abord si c'est un PID valide
+        if [[ "$target" =~ ^[0-9]+$ ]]; then
+            # Vérifier si c'est un PID de processus openfortivpn
+            if [ -d "/proc/$target" ] && ps -p "$target" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
+                # C'est un PID valide, déconnecter directement
+                disconnect_one "$target"
+                return
+            fi
+            
+            # Sinon, c'est peut-être un index de position
+            if [ "$target" -ge 1 ] && [ "$target" -le ${#connected_vpns[@]} ]; then
+                disconnect_one "${connected_vpns[$((target - 1))]}"
+                return
+            else
+                # Aucune des deux interprétations ne fonctionne
+                log "❌ '$target' n'est ni un PID valide ni un index valide (VPNs trackés: ${#connected_vpns[@]})" "$RED"
+                return 1
+            fi
+        fi
+        
+        # Sinon, c'est un ID de VPN
+        # Vérifier que ce VPN est bien connecté
+        local found=false
+        for vpn_id in "${connected_vpns[@]}"; do
+            if [ "$vpn_id" = "$target" ]; then
+                found=true
+                break
+            fi
+        done
+        
+        if [ "$found" = true ]; then
+            disconnect_one "$target"
+            return
+        else
+            log "❌ VPN '$target' n'est pas connecté" "$RED"
+            return 1
+        fi
+    fi
+
+    # Mode interactif : vérifier s'il y a des VPNs connectés
+    if [ ${#connected_vpns[@]} -eq 0 ]; then
+        log "❌ Aucune connexion trackée active" "$RED"
+        
+        # Vérifier s'il y a des VPNs non trackés
+        if ps aux | grep -E "[o]penfortivpn" &>/dev/null; then
+            echo ""
+            log "⚠️  Des VPNs fantômes ont été détectés (non trackés par le script)" "$YELLOW"
+            read -p "Voulez-vous nettoyer ces connexions fantômes ? (o/N) " cleanup_choice
+            
+            if [[ "$cleanup_choice" =~ ^[oO]$ ]]; then
+                echo ""
+                log "🧹 Nettoyage des connexions fantômes en cours..." "$BLUE"
+                local cleaned_count=$(cleanup_orphans)
+                if [ "$cleaned_count" -gt 0 ]; then
+                    log "✅ $cleaned_count élément(s) nettoyé(s)" "$GREEN"
+                else
+                    log "ℹ️  Aucun élément à nettoyer" "$BLUE"
+                fi
+            else
+                log "💡 Vous pouvez aussi utiliser 'vpn status' pour voir les détails et 'vpn disconnect <pid>' pour déconnecter manuellement" "$BLUE"
+            fi
+        fi
+        return 1
+    fi
+
+    # Mode interactif : si un seul VPN connecté, le déconnecter directement
+    if [ ${#connected_vpns[@]} -eq 1 ]; then
+        disconnect_one "${connected_vpns[0]}"
+        return
+    fi
+
+    # Mode interactif : plusieurs VPNs connectés
+    echo -e "${BLUE}VPNs actuellement connectés :${NC}"
+    local idx=1
+    for vpn_id in "${connected_vpns[@]}"; do
+        local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
+        echo "  $idx) $display_name"
+        idx=$((idx + 1))
+    done
+    echo "  a) Tout déconnecter"
+    echo ""
+    read -p "Quel VPN déconnecter ? " dc_choice
+
+    if [[ "$dc_choice" = "a" || "$dc_choice" = "A" ]]; then
+        for vpn_id in "${connected_vpns[@]}"; do
+            disconnect_one "$vpn_id"
+        done
+    elif [[ "$dc_choice" =~ ^[0-9]+$ ]] && [ "$dc_choice" -ge 1 ] && [ "$dc_choice" -le ${#connected_vpns[@]} ]; then
+        disconnect_one "${connected_vpns[$((dc_choice - 1))]}"
+    else
+        log "❌ Choix invalide" "$RED"
+    fi
+}
+
+# ============================================================
+#  Liste
+# ============================================================
+
+list_vpns() {
+    echo -e "${BLUE}VPNs disponibles:${NC}"
+    local count=$(vpn_count)
+    for i in $(seq 1 "$count"); do
+        local vpn_id=$(vpn_id_at "$i")
+        local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
+        if is_vpn_connected "$vpn_id"; then
+            echo -e "  $i) ${GREEN}● $display_name${NC}"
+        else
+            echo "  $i) $display_name"
+        fi
+    done
+}
+
+# ============================================================
+#  Connexion
+# ============================================================
+
+connect() {
+    local count=$(vpn_count)
+
+    # Choisir le VPN
+    if [ -z "$1" ]; then
+        echo ""
+        list_vpns
+        echo ""
+        read -p "Choisissez un VPN (1-$count): " vpn_choice
+    else
+        vpn_choice="$1"
+    fi
+
+    # Valider le choix
+    if ! [[ "$vpn_choice" =~ ^[0-9]+$ ]] || [ "$vpn_choice" -lt 1 ] || [ "$vpn_choice" -gt "$count" ]; then
+        log "❌ Choix invalide (1-$count)" "$RED"
+        return 1
+    fi
+
+    local vpn_id=$(vpn_id_at "$vpn_choice")
+    local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
+    local auth=$(vpn_get "$vpn_id" "auth" "password")
+    local config_file=$(vpn_get "$vpn_id" "config")
+    local timeout=$(vpn_get "$vpn_id" "timeout" "${DEFAULT_TIMEOUTS[$auth]:-20}")
+
+    # Vérifier si déjà connecté
+    if is_vpn_connected "$vpn_id"; then
+        log "⚠️  $display_name est déjà connecté" "$YELLOW"
+        read -p "Reconnecter ? (o/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Oo]$ ]]; then
+            disconnect_one "$vpn_id"
+            sleep 2
+        else
+            return 1
+        fi
+    fi
+
+    # Mémoriser les interfaces ppp existantes avant connexion
+    local ppp_before=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | sort)
+    local vpn_log="$LOG_DIR/${vpn_id}.log"
+
+    # === Branche SAML ===
+    if [ "$auth" = "saml" ]; then
+        local saml_host=$(vpn_get "$vpn_id" "saml_host")
+        local saml_cert=$(vpn_get "$vpn_id" "saml_cert")
+
+        if [ -z "$saml_host" ]; then
+            log "❌ saml_host manquant dans la config pour $vpn_id" "$RED"
+            return 1
+        fi
+
+        if ! command -v openfortivpn &> /dev/null; then
+            log "❌ openfortivpn n'est pas installé" "$RED"
+            return 1
+        fi
+
+        log "🔐 Ce VPN utilise l'authentification SSO (SAML)" "$YELLOW"
+        echo ""
+
+        # Lancer openfortivpn en background
+        if [ -n "$saml_cert" ]; then
+            sudo -b openfortivpn "$saml_host" --saml-login --trusted-cert "$saml_cert" > "$vpn_log" 2>&1
+        else
+            sudo -b openfortivpn "$saml_host" --saml-login > "$vpn_log" 2>&1
+        fi
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        # Extraire le hostname sans le port pour la recherche
+        local saml_host_base=$(echo "$saml_host" | cut -d':' -f1)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$saml_host_base" && echo "$pid" && break
+        done)
+
+        # Attendre l'URL SAML (max 10s)
+        echo -n "Démarrage"
+        local url_found=false
+        for i in {1..10}; do
+            if [ -f "$vpn_log" ]; then
+                local auth_url=$(grep -oP "Authenticate at '\K[^']+" "$vpn_log" 2>/dev/null)
+                if [ -n "$auth_url" ]; then
+                    url_found=true
+                    echo ""
+                    echo ""
+                    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+                    echo -e "${YELLOW}🌐 Authentification SSO requise${NC}"
+                    echo ""
+                    echo -e "  ${GREEN}$auth_url${NC}"
+                    echo ""
+                    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+                    echo ""
+                    
+                    # Essayer d'ouvrir automatiquement le navigateur
+                    if open_browser "$auth_url"; then
+                        echo -e "${GREEN}✅ Navigateur ouvert automatiquement${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️  Impossible d'ouvrir le navigateur automatiquement${NC}"
+                        echo -e "${YELLOW}   Veuillez ouvrir l'URL ci-dessus manuellement${NC}"
+                    fi
+                    echo ""
+                    
+                    break
+                fi
+            fi
+            echo -n "."
+            sleep 1
+        done
+
+        if [ "$url_found" = false ]; then
+            echo ""
+            log "❌ Impossible de récupérer l'URL SAML" "$RED"
+            log "📝 Vérifiez les logs: tail -f $vpn_log" "$YELLOW"
+            [ -n "$vpn_pid" ] && sudo kill -INT "$vpn_pid" 2>/dev/null
+            return 1
+        fi
+
+        echo -e "${YELLOW}En attente de l'authentification dans le navigateur...${NC}"
+        _wait_for_connection "$vpn_id" "$vpn_pid" "$ppp_before" "$vpn_log" "$timeout"
+        return $?
+    fi
+
+    # === Branches password / 2fa (nécessitent un fichier de config) ===
+    if [ -z "$config_file" ]; then
+        log "❌ config manquant dans la config pour $vpn_id" "$RED"
+        return 1
+    fi
+
+    local config_path="$CONFIG_DIR/$config_file"
+    if [ ! -f "$config_path" ]; then
+        log "❌ Configuration introuvable: $config_path" "$RED"
+        return 1
+    fi
+
+    log "🚀 Connexion à $display_name..." "$BLUE"
+
+    if [ "$auth" = "2fa" ]; then
+        # === Mode 2FA : prompt OTP puis background ===
+        log "🔐 Ce VPN nécessite un code FortiToken" "$YELLOW"
+        echo ""
+        read -p "$(echo -e "${BLUE}Code FortiToken : ${NC}")" otp_code
+
+        if [ -z "$otp_code" ]; then
+            log "❌ Aucun code FortiToken saisi" "$RED"
+            return 1
+        fi
+
+        sudo -b openfortivpn -c "$config_path" --otp="$otp_code" > "$vpn_log" 2>&1
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$(basename "$config_path")" && echo "$pid" && break
+        done)
+    else
+        # === Mode password : background direct ===
+        sudo -b openfortivpn -c "$config_path" > "$vpn_log" 2>&1
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$(basename "$config_path")" && echo "$pid" && break
+        done)
+    fi
+
+    echo -n "Connexion en cours"
+    _wait_for_connection "$vpn_id" "$vpn_pid" "$ppp_before" "$vpn_log" "$timeout"
+    return $?
+}
+
+# ============================================================
+#  Attente de connexion (fonction commune aux 3 modes)
+# ============================================================
+
+_wait_for_connection() {
+    local vpn_id="$1"
+    local vpn_pid="$2"
+    local ppp_before="$3"
+    local vpn_log="$4"
+    local timeout="${5:-20}"
+    local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
+
+    for i in $(seq 1 "$timeout"); do
+        local ppp_after=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | sort)
+        local new_ppp=$(comm -13 <(echo "$ppp_before") <(echo "$ppp_after") | head -1)
+
+        if [ -n "$new_ppp" ]; then
+            local ip=$(ip a show "$new_ppp" | grep "inet " | awk '{print $2}' | cut -d'/' -f1)
+
+            echo "$vpn_pid" > "$SESSION_DIR/.session_${vpn_id}"
+
+            echo ""
+            log "✅ Connecté à $display_name (IP: $ip, interface: $new_ppp)" "$GREEN"
+            echo ""
+            echo -e "${BLUE}Routes VPN actives:${NC}"
+            ip route show | grep "$new_ppp" | head -5
+            echo ""
+            log "📝 Logs: tail -f $vpn_log" "$BLUE"
+            return 0
+        fi
+
+        # Vérifier si le processus a crashé
+        if [ -n "$vpn_pid" ] && ! [ -d "/proc/$vpn_pid" ]; then
+            echo ""
+            log "❌ Le processus openfortivpn s'est arrêté" "$RED"
+            log "📝 Vérifiez les logs: cat $vpn_log" "$YELLOW"
+            return 1
+        fi
+
+        echo -n "."
+        sleep 1
+    done
+
+    echo ""
+    log "❌ Timeout: connexion non établie après ${timeout}s" "$RED"
+    log "📝 Vérifiez les logs: tail -f $vpn_log" "$YELLOW"
+    [ -n "$vpn_pid" ] && sudo kill -INT "$vpn_pid" 2>/dev/null
+    return 1
+}
+
+# ============================================================
+#  Menu interactif
+# ============================================================
+
+show_menu() {
+    local count=$(vpn_count)
+    echo ""
+    echo -e "${BLUE}=== Gestionnaire VPN ===${NC}"
+    echo ""
+    check_status
+    echo ""
+    list_vpns
+    echo ""
+    echo "  c) Se connecter"
+    echo "  d) Se déconnecter"
+    echo "  s) Statut"
+    echo "  q) Quitter"
+    echo ""
+    read -p "Votre choix: " choice
+
+    case $choice in
+        c|C) connect ;;
+        d|D) disconnect ;;
+        s|S) check_status ;;
+        q|Q) exit 0 ;;
+        *)
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+                connect "$choice"
+            else
+                log "❌ Choix invalide" "$RED"
+            fi
+            ;;
+    esac
+}
+
+# ============================================================
+#  Configurateur interactif
+# ============================================================
+
+configure_vpn() {
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}        Configurateur VPN - Assistant de création          ${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    
+    # 1. ID du VPN
+    echo -e "${YELLOW}Identifiant du VPN${NC}"
+    echo "Choisissez un identifiant unique (lettres, chiffres, tirets)"
+    echo "Exemple: mon-vpn, vpn-prod, kore"
+    read -p "ID du VPN : " vpn_id
+    
+    if [ -z "$vpn_id" ]; then
+        log "❌ L'ID ne peut pas être vide" "$RED"
+        return 1
+    fi
+    
+    # Vérifier que l'ID n'existe pas déjà
+    if grep -q "^\[${vpn_id}\]" "$VPN_CONF" 2>/dev/null; then
+        log "❌ Un VPN avec l'ID '$vpn_id' existe déjà" "$RED"
+        return 1
+    fi
+    
+    # 2. Nom affiché
+    echo ""
+    echo -e "${YELLOW}Nom du VPN${NC}"
+    echo "Nom descriptif qui sera affiché dans le menu"
+    read -p "Nom : " vpn_name
+    
+    if [ -z "$vpn_name" ]; then
+        vpn_name="$vpn_id"
+    fi
+    
+    # 3. Type d'authentification
+    echo ""
+    echo -e "${YELLOW}Type d'authentification${NC}"
+    echo "  1) password - Mot de passe simple"
+    echo "  2) 2fa      - Authentification 2FA (FortiToken)"
+    echo "  3) saml     - Authentification SSO/SAML"
+    read -p "Votre choix [1-3] : " auth_choice
+    
+    case $auth_choice in
+        1) auth_type="password" ;;
+        2) auth_type="2fa" ;;
+        3) auth_type="saml" ;;
+        *)
+            log "❌ Choix invalide" "$RED"
+            return 1
+            ;;
+    esac
+    
+    # 4. Configuration selon le type
+    if [ "$auth_type" = "saml" ]; then
+        # === Mode SAML ===
+        echo ""
+        echo -e "${YELLOW}Configuration SAML${NC}"
+        echo ""
+        read -p "Hôte:port (ex: vpn.example.com:444) : " saml_host
+        
+        if [ -z "$saml_host" ]; then
+            log "❌ L'hôte SAML est obligatoire" "$RED"
+            return 1
+        fi
+        
+        echo ""
+        echo "Certificat SSL (optionnel)"
+        echo "Pour obtenir le certificat :"
+        echo "  echo | openssl s_client -connect $saml_host 2>/dev/null | openssl x509 -fingerprint -noout -sha256"
+        read -p "Certificat SHA256 (laissez vide si inconnu) : " saml_cert
+        
+        # Créer l'entrée dans vpns.conf
+        echo "" >> "$VPN_CONF"
+        echo "[$vpn_id]" >> "$VPN_CONF"
+        echo "name = $vpn_name" >> "$VPN_CONF"
+        echo "auth = saml" >> "$VPN_CONF"
+        echo "saml_host = $saml_host" >> "$VPN_CONF"
+        if [ -n "$saml_cert" ]; then
+            echo "saml_cert = $saml_cert" >> "$VPN_CONF"
+        fi
+        
+        echo ""
+        log "✅ VPN SAML '$vpn_name' créé avec succès !" "$GREEN"
+        echo ""
+        echo "Configuration ajoutée dans $VPN_CONF"
+        
+    else
+        # === Mode password / 2fa ===
+        echo ""
+        echo -e "${YELLOW}Configuration du serveur${NC}"
+        echo ""
+        read -p "Hôte (ex: vpn.example.com ou 46.18.224.128) : " vpn_host
+        read -p "Port (défaut: 443) : " vpn_port
+        vpn_port="${vpn_port:-443}"
+        
+        if [ -z "$vpn_host" ]; then
+            log "❌ L'hôte est obligatoire" "$RED"
+            return 1
+        fi
+        
+        read -p "Nom d'utilisateur : " vpn_username
+        
+        if [ -z "$vpn_username" ]; then
+            log "❌ Le nom d'utilisateur est obligatoire" "$RED"
+            return 1
+        fi
+        
+        # Mot de passe
+        echo ""
+        if [ "$auth_type" = "2fa" ]; then
+            echo "Mot de passe (le code 2FA sera demandé à chaque connexion)"
+        else
+            echo "Mot de passe"
+        fi
+        read -s -p "Mot de passe : " vpn_password
+        echo ""
+        
+        # Certificat SSL
+        echo ""
+        echo "Certificat SSL"
+        echo "Pour obtenir le certificat, exécutez :"
+        echo "  echo | openssl s_client -connect $vpn_host:$vpn_port 2>/dev/null | openssl x509 -fingerprint -noout -sha256"
+        echo ""
+        read -p "Certificat SHA256 (sans les ':') : " vpn_cert
+        
+        if [ -z "$vpn_cert" ]; then
+            log "⚠️  Attention : connexion sans vérification du certificat (non recommandé)" "$YELLOW"
+        fi
+        
+        # Créer le fichier de configuration openfortivpn
+        local config_file="${vpn_id}.conf"
+        local config_path="$CONFIG_DIR/$config_file"
+        
+        cat > "$config_path" << EOF
+# Configuration VPN: $vpn_name
+host = $vpn_host
+port = $vpn_port
+username = $vpn_username
+EOF
+        
+        # Ajouter le mot de passe si fourni
+        if [ -n "$vpn_password" ]; then
+            echo "password = $vpn_password" >> "$config_path"
+        fi
+        
+        # Ajouter le certificat si fourni
+        if [ -n "$vpn_cert" ]; then
+            echo "trusted-cert = $vpn_cert" >> "$config_path"
+        fi
+        
+        # Ajouter les paramètres réseau
+        cat >> "$config_path" << EOF
+set-routes = 1
+set-dns = 0
+pppd-use-peerdns = 0
+EOF
+        
+        # Protéger le fichier
+        chmod 600 "$config_path"
+        
+        # Créer l'entrée dans vpns.conf
+        echo "" >> "$VPN_CONF"
+        echo "[$vpn_id]" >> "$VPN_CONF"
+        echo "name = $vpn_name" >> "$VPN_CONF"
+        echo "auth = $auth_type" >> "$VPN_CONF"
+        echo "config = $config_file" >> "$VPN_CONF"
+        
+        echo ""
+        log "✅ VPN '$vpn_name' créé avec succès !" "$GREEN"
+        echo ""
+        echo "Configuration créée :"
+        echo "  • $VPN_CONF (entrée ajoutée)"
+        echo "  • $config_path (chmod 600)"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}Vous pouvez maintenant vous connecter avec :${NC}"
+    echo "  vpn connect $(vpn_count)"
+    echo ""
+    
+    return 0
+}
+
+# ============================================================
+#  Point d'entrée
+# ============================================================
+
+# Charger la configuration au démarrage
+load_config
+
+case "${1:-menu}" in
+    connect|c)
+        connect "$2"
+        ;;
+    disconnect|d|stop)
+        disconnect "$2"
+        ;;
+    status|s)
+        check_status
+        ;;
+    list|l)
+        list_vpns
+        ;;
+    configure|config)
+        configure_vpn
+        ;;
+    menu|m|"")
+        while true; do
+            show_menu
+        done
+        ;;
+    help|h|-h|--help)
+        echo "Usage: vpn [commande] [options]"
+        echo ""
+        echo "Commandes:"
+        echo "  connect [1-$(vpn_count)]           Se connecter à un VPN (cumulable)"
+        echo "  disconnect [id|numéro|pid|all]  Se déconnecter d'un VPN spécifique"
+        echo "                                   - Sans argument : menu interactif"
+        echo "                                   - ID du VPN : ex. 'koesio-sso'"
+        echo "                                   - Numéro : ex. '1' (premier connecté)"
+        echo "                                   - PID : ex. '322169' (VPN non tracké)"
+        echo "                                   - 'all' : tout déconnecter"
+        echo "  status                          Afficher le statut de tous les VPNs"
+        echo "                                   (trackés et non trackés)"
+        echo "  list                            Lister les VPNs disponibles"
+        echo "  configure                       Assistant de création de VPN"
+        echo "  menu                            Menu interactif (par défaut)"
+        echo "  help                            Afficher cette aide"
+        echo ""
+        echo "Multi-VPN:"
+        echo "  Les VPNs routant vers des réseaux différents peuvent"
+        echo "  être lancés simultanément (ex: KORE + SSO)."
+        echo ""
+        echo "Configuration:"
+        echo "  $VPN_CONF"
+        echo ""
+        echo "Exemples:"
+        echo "  vpn                        # Menu interactif"
+        echo "  vpn configure              # Créer un nouveau VPN"
+        echo "  vpn connect 1              # Se connecter au premier VPN"
+        echo "  vpn status                 # Voir tous les VPNs (trackés et non trackés)"
+        echo "  vpn disconnect             # Déconnexion interactive"
+        echo "  vpn disconnect koesio-sso  # Déconnecter un VPN par ID"
+        echo "  vpn disconnect 2           # Déconnecter le 2e VPN connecté"
+        echo "  vpn disconnect 322169      # Déconnecter par PID (VPN non tracké)"
+        echo "  vpn disconnect all         # Tout déconnecter"
+        ;;
+    *)
+        log "❌ Commande inconnue: $1" "$RED"
+        echo "Utilisez 'vpn help' pour l'aide"
+        ;;
+esac
