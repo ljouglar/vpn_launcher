@@ -325,10 +325,42 @@ echo ""
 echo -e "${YELLOW}🔄 Pour mettre à jour le script :${NC}"
 echo "   cd $(dirname "$SCRIPT_SOURCE") && git pull"
 echo ""
-echo -e "${YELLOW}📋 Prochaines étapes :${NC}"
-echo "   1. Configurez vos VPNs dans ~/.vpn/vpns.conf"
-echo "   2. Créez les fichiers de config (avec mots de passe) dans ~/.vpn/configs/"
-echo "   3. Lancez : ~/vpn"
+
+# Proposer le configurateur si aucun VPN n'est configuré
+VPN_COUNT=$(grep -c "^\[.*\]$" "$VPNS_CONF" 2>/dev/null || echo "0")
+
+if [ "$VPN_COUNT" -eq 0 ]; then
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}   Aucun VPN configuré - Configuration recommandée         ${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BLUE}Voulez-vous configurer votre premier VPN maintenant ?${NC}"
+    echo ""
+    read -p "Lancer le configurateur ? (O/n) : " -n 1 -r
+    echo ""
+    
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        echo ""
+        "$SCRIPT_DEST" configure
+    else
+        echo ""
+        echo -e "${BLUE}Vous pourrez le faire plus tard avec :${NC}"
+        echo "   ~/vpn configure"
+        echo ""
+    fi
+else
+    echo -e "${BLUE}💡 VPNs configurés : $VPN_COUNT${NC}"
+    echo ""
+    echo -e "${YELLOW}Pour ajouter un nouveau VPN :${NC}"
+    echo "   ~/vpn configure"
+    echo ""
+fi
+
+echo -e "${YELLOW}📋 Commandes utiles :${NC}"
+echo "   ~/vpn                  # Menu interactif"
+echo "   ~/vpn configure        # Créer un nouveau VPN"
+echo "   ~/vpn list             # Lister les VPNs"
+echo "   ~/vpn help             # Aide complète"
 echo ""
 echo -e "${BLUE}📖 Documentation complète : cat ~/.vpn/README.md${NC}"
 echo ""

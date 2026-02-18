@@ -7,6 +7,15 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Unreleased]
 
+### Ajouté
+- **Configurateur interactif de VPN**
+  - Nouvelle commande `vpn configure` pour créer des VPNs facilement
+  - Assistant pas à pas qui guide l'utilisateur
+  - Support des 3 types d'authentification (password, 2fa, saml)
+  - Création automatique des fichiers de configuration
+  - Validation et protection automatique (chmod 600)
+  - L'installateur propose maintenant de lancer le configurateur si aucun VPN n'est configuré
+
 ### Modifié
 - **Simplification de la gestion des mots de passe**
   - Suppression du fichier `passwords.conf` et de la propriété `password_key`

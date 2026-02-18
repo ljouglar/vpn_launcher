@@ -69,7 +69,24 @@ git pull
 
 ## 🔧 Configuration d'un VPN
 
-### 1. Récupérer le certificat SSL du serveur
+### Méthode recommandée : Assistant interactif
+
+La façon la plus simple de configurer un VPN est d'utiliser l'assistant intégré :
+
+```bash
+~/vpn configure
+```
+
+L'assistant vous guidera pas à pas pour :
+- Choisir un identifiant pour votre VPN
+- Définir le nom affiché
+- Sélectionner le type d'authentification (password, 2fa, ou saml)
+- Configurer les paramètres nécessaires
+- Créer automatiquement tous les fichiers requis
+
+### Méthode manuelle (avancé)
+
+#### 1. Récupérer le certificat SSL du serveur
 
 ```bash
 echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
@@ -86,7 +103,7 @@ SHA256 Fingerprint=4D:49:0E:C4:...
 → 4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42
 ```
 
-### 2. Créer la config openfortivpn
+#### 2. Créer la config openfortivpn
 
 Créez `~/.vpn/configs/mon-vpn.conf` :
 ```properties
@@ -124,6 +141,9 @@ config = mon-vpn.conf
 ```bash
 # Menu interactif
 ~/vpn
+
+# Créer un nouveau VPN (assistant interactif)
+~/vpn configure
 
 # Connexion directe au VPN #1
 ~/vpn connect 1
