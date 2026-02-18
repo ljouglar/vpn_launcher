@@ -7,6 +7,14 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Unreleased]
 
+### Modifié
+- **Simplification de la gestion des mots de passe**
+  - Suppression du fichier `passwords.conf` et de la propriété `password_key`
+  - Les mots de passe sont maintenant directement stockés dans les fichiers `.conf` d'openfortivpn
+  - Les fichiers `.conf` sont automatiquement protégés avec chmod 600
+  - Architecture plus simple et cohérente avec le format natif d'openfortivpn
+  - Les fichiers `*.conf` sont ajoutés au .gitignore pour éviter de versionner les secrets
+
 ### Ajouté
 - **Nettoyage interactif des VPNs fantômes**
   - Si vous utilisez `vpn disconnect` sans connexions trackées mais avec des VPNs fantômes

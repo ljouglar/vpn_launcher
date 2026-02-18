@@ -93,11 +93,14 @@ Créez `~/.vpn/configs/mon-vpn.conf` :
 host = vpn.example.com
 port = 443
 username = votre.nom@example.com
+password = votre_mot_de_passe_secret
 trusted-cert = 4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42
 set-routes = 1
 set-dns = 0
 pppd-use-peerdns = 0
 ```
+
+**Note** : Le mot de passe est directement intégré dans le fichier .conf. Le fichier sera automatiquement protégé (chmod 600).
 
 ### 3. Déclarer le VPN
 
@@ -108,17 +111,9 @@ pppd-use-peerdns = 0
 name = Mon VPN Corporate
 auth = password
 config = mon-vpn.conf
-password_key = MON_VPN
 ```
 
-### 4. Ajouter le mot de passe (optionnel)
-
-Éditez `~/.vpn/passwords.conf` :
-```properties
-MON_VPN=mon_mot_de_passe
-```
-
-### 5. Tester
+### 4. Tester
 
 ```bash
 ~/vpn
@@ -148,10 +143,10 @@ MON_VPN=mon_mot_de_passe
 
 ## 🔐 Sécurité
 
-- Les mots de passe dans `~/.vpn/passwords.conf` sont protégés (chmod 600)
-- Les fichiers de config temporaires sont supprimés après usage
+- Les fichiers de configuration `.conf` contiennent des informations sensibles et sont protégés (chmod 600)
 - Les logs ne contiennent jamais de mots de passe en clair
 - Chaque session est isolée avec un PID unique
+- N'ajoutez jamais les fichiers `*.conf` à votre gestionnaire de versions
 
 ## 🆘 Support
 

@@ -263,7 +263,8 @@ votre_user ALL=(ALL) NOPASSWD: /usr/bin/openfortivpn
 │  ~/.vpn/                                        │
 │  ├── vpns.conf       → Déclaration des VPNs     │
 │  ├── configs/        → Configs openfortivpn     │
-│  ├── passwords.conf  → Mots de passe (chmod 600)│
+│  │   └── *.conf     → (chmod 600, avec mots de │
+│  │                     passe intégrés)          │
 │  └── logs/           → Logs des connexions      │
 └──────┬──────────────────────────────────────────┘
        │

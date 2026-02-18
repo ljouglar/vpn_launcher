@@ -75,7 +75,6 @@ if [ ! -f "$VPNS_CONF" ]; then
 #   name           = Nom affiché (obligatoire)
 #   auth           = Mode d'authentification : password | 2fa | saml (obligatoire)
 #   config         = Fichier de config openfortivpn dans ~/.vpn/configs/ (pour password et 2fa)
-#   password_key   = Clé dans passwords.conf (pour password et 2fa)
 #   saml_host      = Hôte:port pour authentification SAML (pour saml)
 #   saml_cert      = Certificat de confiance pour SAML (pour saml)
 #   timeout        = Timeout de connexion en secondes (défaut : 20 pour password, 30 pour 2fa, 60 pour saml)
@@ -85,14 +84,12 @@ if [ ! -f "$VPNS_CONF" ]; then
 # name = Mon VPN Corporate
 # auth = password
 # config = mon-vpn.conf
-# password_key = MON_VPN
 
 # Exemple : VPN avec authentification 2FA (FortiToken)
 # [vpn-prod]
 # name = Production VPN
 # auth = 2fa
 # config = vpn-prod.conf
-# password_key = VPN_PROD
 
 # Exemple : VPN avec authentification SAML (SSO)
 # [vpn-sso]
@@ -107,27 +104,6 @@ else
     echo -e "${BLUE}ℹ️  Le fichier vpns.conf existe déjà, il n'a pas été modifié${NC}"
 fi
 
-# Créer le fichier passwords.conf si inexistant
-PASSWORD_FILE="$VPN_DIR/passwords.conf"
-if [ ! -f "$PASSWORD_FILE" ]; then
-    echo -e "${YELLOW}Création du fichier de mots de passe...${NC}"
-    cat > "$PASSWORD_FILE" << 'EOF'
-# Fichier des mots de passe VPN
-# Format: CLE=mot_de_passe
-# Ce fichier doit correspondre aux 'password_key' définis dans vpns.conf
-#
-# Exemples :
-# MON_VPN=mon_mot_de_passe_secret
-# VPN_PROD=autre_mot_de_passe
-
-EOF
-    chmod 600 "$PASSWORD_FILE"
-    echo -e "${GREEN}✅ Fichier de mots de passe créé (chmod 600)${NC}"
-else
-    echo -e "${BLUE}ℹ️  Le fichier passwords.conf existe déjà${NC}"
-    chmod 600 "$PASSWORD_FILE"
-fi
-
 # Créer un exemple de configuration openfortivpn
 EXAMPLE_CONF="$CONFIG_DIR/example.conf"
 if [ ! -f "$EXAMPLE_CONF" ]; then
@@ -138,18 +114,28 @@ if [ ! -f "$EXAMPLE_CONF" ]; then
 #
 # Pour obtenir le certificat d'un serveur VPN :
 # echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
+#
+# IMPORTANT : Ce fichier contient des informations sensibles (mot de passe)
+# Il sera automatiquement protégé avec chmod 600
 
 host = vpn.example.com
 port = 443
 username = votre.nom@example.com
+password = votre_mot_de_passe_secret
 trusted-cert = votre_certificat_sha256_ici
 set-routes = 1
 set-dns = 0
 pppd-use-peerdns = 0
 
 EOF
-    echo -e "${GREEN}✅ Exemple de configuration créé${NC}"
+    chmod 600 "$EXAMPLE_CONF"
+    echo -e "${GREEN}✅ Exemple de configuration créé (chmod 600)${NC}"
 fi
+
+# Protéger tous les fichiers .conf existants
+echo -e "${YELLOW}Protection des fichiers de configuration...${NC}"
+find "$CONFIG_DIR" -type f -name "*.conf" -exec chmod 600 {} \;
+echo -e "${GREEN}✅ Permissions des fichiers .conf définies à 600${NC}"
 
 # Créer le README
 README_FILE="$VPN_DIR/README.md"
@@ -195,11 +181,14 @@ Dans `~/.vpn/configs/`, créez un fichier pour chaque VPN (ex: `mon-vpn.conf`) :
 host = vpn.example.com
 port = 443
 username = votre.nom@example.com
+password = votre_mot_de_passe_secret
 trusted-cert = 4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42
 set-routes = 1
 set-dns = 0
 pppd-use-peerdns = 0
 ```
+
+**Note** : Le mot de passe est directement dans le fichier .conf. Il sera protégé avec chmod 600.
 
 ### 4. Déclarer le VPN dans vpns.conf
 
@@ -211,7 +200,6 @@ pppd-use-peerdns = 0
 name = Mon VPN Corporate
 auth = password
 config = mon-vpn.conf
-password_key = MON_VPN
 ```
 
 **Pour un VPN avec 2FA (FortiToken) :**
@@ -220,7 +208,6 @@ password_key = MON_VPN
 name = Production VPN
 auth = 2fa
 config = vpn-prod.conf
-password_key = VPN_PROD
 ```
 
 **Pour un VPN avec SAML/SSO :**
@@ -231,17 +218,6 @@ auth = saml
 saml_host = vpn.example.com:444
 saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
 ```
-
-### 5. Ajouter les mots de passe (optionnel mais recommandé)
-
-Éditez `~/.vpn/passwords.conf` :
-
-```properties
-MON_VPN=mon_mot_de_passe_secret
-VPN_PROD=autre_mot_de_passe
-```
-
-Si aucun mot de passe n'est configuré, il sera demandé interactivement.
 
 ## 🚀 Utilisation
 
@@ -278,9 +254,9 @@ tail -f ~/.vpn/logs/mon-vpn.log
 
 ## 🔐 Sécurité
 
-- Le fichier `passwords.conf` est protégé (chmod 600)
+- Les fichiers `.conf` contiennent des informations sensibles et sont protégés (chmod 600)
 - Les mots de passe ne sont jamais affichés dans les logs
-- Les configurations temporaires sont nettoyées automatiquement
+- N'ajoutez jamais les fichiers `*.conf` à votre gestionnaire de versions
 
 ## 🆘 Dépannage
 
@@ -343,8 +319,7 @@ echo ""
 echo -e "${BLUE}📁 Structure installée :${NC}"
 echo "   ~/vpn                          → Lien symbolique vers le script"
 echo "   ~/.vpn/vpns.conf               → Configuration des VPNs"
-echo "   ~/.vpn/passwords.conf          → Mots de passe (chmod 600)"
-echo "   ~/.vpn/configs/                → Configurations openfortivpn"
+echo "   ~/.vpn/configs/                → Configurations openfortivpn (chmod 600)"
 echo "   ~/.vpn/logs/                   → Logs de connexion"
 echo ""
 echo -e "${YELLOW}🔄 Pour mettre à jour le script :${NC}"
@@ -352,9 +327,8 @@ echo "   cd $(dirname "$SCRIPT_SOURCE") && git pull"
 echo ""
 echo -e "${YELLOW}📋 Prochaines étapes :${NC}"
 echo "   1. Configurez vos VPNs dans ~/.vpn/vpns.conf"
-echo "   2. Créez les fichiers de config dans ~/.vpn/configs/"
-echo "   3. (Optionnel) Ajoutez vos mots de passe dans ~/.vpn/passwords.conf"
-echo "   4. Lancez : ~/vpn"
+echo "   2. Créez les fichiers de config (avec mots de passe) dans ~/.vpn/configs/"
+echo "   3. Lancez : ~/vpn"
 echo ""
 echo -e "${BLUE}📖 Documentation complète : cat ~/.vpn/README.md${NC}"
 echo ""

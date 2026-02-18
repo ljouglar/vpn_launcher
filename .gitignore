@@ -10,9 +10,10 @@
 # Logs
 *.log
 
-# Fichiers de configuration personnels (exemples)
-*.conf.personal
-passwords.conf.personal
+# Fichiers de configuration contenant des secrets
+# Note : example.conf est volontairement versionné comme template
+*.conf
+!example.conf
 
 # IDEs
 .vscode/

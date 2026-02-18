@@ -9,7 +9,6 @@ set -o pipefail
 VPN_DIR="$HOME/.vpn"
 VPN_CONF="$VPN_DIR/vpns.conf"
 CONFIG_DIR="$VPN_DIR/configs"
-PASSWORD_FILE="$VPN_DIR/passwords.conf"
 LOG_DIR="$VPN_DIR/logs"
 SESSION_DIR="$VPN_DIR/sessions"
 
@@ -109,13 +108,6 @@ vpn_index_of() {
 log() {
     echo -e "${2}$1${NC}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_DIR/vpn.log"
-}
-
-get_password() {
-    local vpn_key="$1"
-    if [ -f "$PASSWORD_FILE" ]; then
-        grep "^${vpn_key}=" "$PASSWORD_FILE" 2>/dev/null | cut -d'=' -f2-
-    fi
 }
 
 open_browser() {
@@ -648,7 +640,6 @@ connect() {
     local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
     local auth=$(vpn_get "$vpn_id" "auth" "password")
     local config_file=$(vpn_get "$vpn_id" "config")
-    local password_key=$(vpn_get "$vpn_id" "password_key")
     local timeout=$(vpn_get "$vpn_id" "timeout" "${DEFAULT_TIMEOUTS[$auth]:-20}")
 
     # Vérifier si déjà connecté
@@ -759,21 +750,6 @@ connect() {
         return 1
     fi
 
-    local temp_config="/tmp/vpn_${vpn_id}_$$.conf"
-    cp "$config_path" "$temp_config"
-
-    # Charger le mot de passe
-    if [ -n "$password_key" ]; then
-        local password=$(get_password "$password_key")
-        if [ -n "$password" ]; then
-            echo "password = $password" >> "$temp_config"
-            log "🔐 Mot de passe chargé depuis $PASSWORD_FILE" "$BLUE"
-        else
-            log "⚠️  Pas de mot de passe dans $PASSWORD_FILE pour $password_key" "$YELLOW"
-            log "💡 Le mot de passe sera demandé interactivement" "$BLUE"
-        fi
-    fi
-
     log "🚀 Connexion à $display_name..." "$BLUE"
 
     if [ "$auth" = "2fa" ]; then
@@ -784,28 +760,27 @@ connect() {
 
         if [ -z "$otp_code" ]; then
             log "❌ Aucun code FortiToken saisi" "$RED"
-            rm -f "$temp_config"
             return 1
         fi
 
-        sudo -b openfortivpn -c "$temp_config" --otp="$otp_code" > "$vpn_log" 2>&1
+        sudo -b openfortivpn -c "$config_path" --otp="$otp_code" > "$vpn_log" 2>&1
         sleep 2
         # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
         local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
-            ps -p "$pid" -o args= | grep -q "$(basename "$temp_config")" && echo "$pid" && break
+            ps -p "$pid" -o args= | grep -q "$(basename "$config_path")" && echo "$pid" && break
         done)
     else
         # === Mode password : background direct ===
-        sudo -b openfortivpn -c "$temp_config" > "$vpn_log" 2>&1
+        sudo -b openfortivpn -c "$config_path" > "$vpn_log" 2>&1
         sleep 2
         # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
         local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
-            ps -p "$pid" -o args= | grep -q "$(basename "$temp_config")" && echo "$pid" && break
+            ps -p "$pid" -o args= | grep -q "$(basename "$config_path")" && echo "$pid" && break
         done)
     fi
 
     echo -n "Connexion en cours"
-    _wait_for_connection "$vpn_id" "$vpn_pid" "$ppp_before" "$vpn_log" "$timeout" "$temp_config"
+    _wait_for_connection "$vpn_id" "$vpn_pid" "$ppp_before" "$vpn_log" "$timeout"
     return $?
 }
 
@@ -819,7 +794,6 @@ _wait_for_connection() {
     local ppp_before="$3"
     local vpn_log="$4"
     local timeout="${5:-20}"
-    local temp_config="$6"  # optionnel, à nettoyer
     local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
 
     for i in $(seq 1 "$timeout"); do
@@ -830,7 +804,6 @@ _wait_for_connection() {
             local ip=$(ip a show "$new_ppp" | grep "inet " | awk '{print $2}' | cut -d'/' -f1)
 
             echo "$vpn_pid" > "$SESSION_DIR/.session_${vpn_id}"
-            [ -n "$temp_config" ] && rm -f "$temp_config"
 
             echo ""
             log "✅ Connecté à $display_name (IP: $ip, interface: $new_ppp)" "$GREEN"
@@ -847,7 +820,6 @@ _wait_for_connection() {
             echo ""
             log "❌ Le processus openfortivpn s'est arrêté" "$RED"
             log "📝 Vérifiez les logs: cat $vpn_log" "$YELLOW"
-            [ -n "$temp_config" ] && rm -f "$temp_config"
             return 1
         fi
 
@@ -859,7 +831,6 @@ _wait_for_connection() {
     log "❌ Timeout: connexion non établie après ${timeout}s" "$RED"
     log "📝 Vérifiez les logs: tail -f $vpn_log" "$YELLOW"
     [ -n "$vpn_pid" ] && sudo kill -INT "$vpn_pid" 2>/dev/null
-    [ -n "$temp_config" ] && rm -f "$temp_config"
     return 1
 }
 
