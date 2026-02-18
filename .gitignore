@@ -1,0 +1,28 @@
+# Archives générées
+*.tar.gz
+*.zip
+
+# Fichiers temporaires
+*.tmp
+*~
+.*.swp
+
+# Logs
+*.log
+
+# Fichiers de configuration personnels (exemples)
+*.conf.personal
+passwords.conf.personal
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests locaux
+test-install/
+.test/
