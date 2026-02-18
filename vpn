@@ -198,6 +198,52 @@ get_connected_vpns() {
     return $connected
 }
 
+check_untracked_vpns() {
+    # Récupérer les PIDs trackés
+    local tracked_pids=()
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        [ -n "$pid" ] && tracked_pids+=("$pid")
+    done
+
+    # Chercher les processus openfortivpn non trackés
+    local untracked=0
+    while IFS= read -r line; do
+        local pid=$(echo "$line" | awk '{print $2}')
+        
+        # Vérifier si ce PID est tracké
+        local is_tracked=false
+        for tracked in "${tracked_pids[@]}"; do
+            if [ "$tracked" = "$pid" ]; then
+                is_tracked=true
+                break
+            fi
+        done
+        
+        if [ "$is_tracked" = false ]; then
+            # Récupérer des infos sur ce processus
+            local cmd=$(ps -p "$pid" -o args= 2>/dev/null)
+            local ppp_if=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | tail -n 1)
+            local ip=""
+            if [ -n "$ppp_if" ] && ip a show "$ppp_if" &>/dev/null; then
+                ip=$(ip a show "$ppp_if" | grep "inet " | awk '{print $2}' | cut -d'/' -f1)
+            fi
+            
+            if [ -n "$ip" ]; then
+                log "⚠️  VPN non tracké (PID: $pid, IP: $ip)" "$YELLOW"
+            else
+                log "⚠️  VPN non tracké (PID: $pid)" "$YELLOW"
+            fi
+            echo "   Commande: $cmd" | head -c 80
+            echo ""
+            untracked=$((untracked + 1))
+        fi
+    done < <(ps aux | grep -E "[o]penfortivpn")
+    
+    return $untracked
+}
+
 check_status() {
     local connected=0
     local has_sessions=false
@@ -213,9 +259,18 @@ check_status() {
         connected=$?
     fi
 
-    if [ $connected -eq 0 ]; then
+    # Vérifier les VPNs non trackés
+    check_untracked_vpns
+    local untracked=$?
+
+    if [ $connected -eq 0 ] && [ $untracked -eq 0 ]; then
         log "❌ Aucune connexion VPN active" "$RED"
         return 1
+    fi
+
+    if [ $untracked -gt 0 ]; then
+        echo ""
+        echo -e "${YELLOW}💡 Astuce: Utilisez 'vpn disconnect <pid>' pour déconnecter un VPN non tracké${NC}"
     fi
 
     return 0
@@ -227,6 +282,43 @@ check_status() {
 
 disconnect_one() {
     local vpn_id="$1"
+    
+    # Si c'est un PID (nombre uniquement), déconnexion directe
+    if [[ "$vpn_id" =~ ^[0-9]+$ ]]; then
+        local pid="$vpn_id"
+        if [ ! -d "/proc/$pid" ]; then
+            log "❌ Aucun processus avec le PID $pid" "$RED"
+            return 1
+        fi
+        
+        # Vérifier que c'est bien un processus openfortivpn
+        if ! ps -p "$pid" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
+            log "❌ Le PID $pid n'est pas un processus openfortivpn" "$RED"
+            return 1
+        fi
+        
+        log "🔌 Déconnexion du processus (PID: $pid)..." "$YELLOW"
+        sudo kill -INT "$pid" 2>/dev/null
+        sleep 2
+        if [ -d "/proc/$pid" ]; then
+            sudo kill -9 "$pid" 2>/dev/null
+            sleep 1
+        fi
+        
+        # Nettoyer toute session orpheline qui pourrait pointer vers ce PID
+        for session_file in "$SESSION_DIR"/.session_*; do
+            [ -f "$session_file" ] || continue
+            local session_pid=$(cat "$session_file" 2>/dev/null)
+            if [ "$session_pid" = "$pid" ]; then
+                rm -f "$session_file"
+            fi
+        done
+        
+        log "✅ Processus déconnecté" "$GREEN"
+        return 0
+    fi
+    
+    # Sinon, c'est un ID de VPN normal
     local session_file="$SESSION_DIR/.session_${vpn_id}"
 
     if [ ! -f "$session_file" ]; then
@@ -264,28 +356,39 @@ disconnect() {
         fi
     done
 
-    if [ ${#connected_vpns[@]} -eq 0 ]; then
-        log "❌ Aucune connexion active" "$RED"
-        return 1
-    fi
-
-    # Si un argument est fourni (ID ou numéro)
+    # Si un argument est fourni (ID, numéro, ou PID)
     if [ -n "$target" ]; then
         # Vérifier si c'est "all" pour tout déconnecter
         if [[ "$target" = "all" || "$target" = "a" ]]; then
             for vpn_id in "${connected_vpns[@]}"; do
                 disconnect_one "$vpn_id"
             done
+            
+            # Aussi déconnecter tous les VPNs non trackés
+            while IFS= read -r line; do
+                local pid=$(echo "$line" | awk '{print $2}')
+                disconnect_one "$pid"
+            done < <(ps aux | grep -E "[o]penfortivpn")
+            
             return
         fi
         
-        # Si c'est un numéro, convertir en ID
+        # Si c'est un nombre, vérifier d'abord si c'est un PID valide
         if [[ "$target" =~ ^[0-9]+$ ]]; then
+            # Vérifier si c'est un PID de processus openfortivpn
+            if [ -d "/proc/$target" ] && ps -p "$target" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
+                # C'est un PID valide, déconnecter directement
+                disconnect_one "$target"
+                return
+            fi
+            
+            # Sinon, c'est peut-être un index de position
             if [ "$target" -ge 1 ] && [ "$target" -le ${#connected_vpns[@]} ]; then
                 disconnect_one "${connected_vpns[$((target - 1))]}"
                 return
             else
-                log "❌ Numéro invalide: $target (VPNs connectés: ${#connected_vpns[@]})" "$RED"
+                # Aucune des deux interprétations ne fonctionne
+                log "❌ '$target' n'est ni un PID valide ni un index valide (VPNs trackés: ${#connected_vpns[@]})" "$RED"
                 return 1
             fi
         fi
@@ -307,6 +410,19 @@ disconnect() {
             log "❌ VPN '$target' n'est pas connecté" "$RED"
             return 1
         fi
+    fi
+
+    # Mode interactif : vérifier s'il y a des VPNs connectés
+    if [ ${#connected_vpns[@]} -eq 0 ]; then
+        log "❌ Aucune connexion trackée active" "$RED"
+        
+        # Vérifier s'il y a des VPNs non trackés
+        if ps aux | grep -E "[o]penfortivpn" &>/dev/null; then
+            echo ""
+            log "⚠️  Il semble y avoir des VPNs non trackés actifs" "$YELLOW"
+            log "💡 Utilisez 'vpn status' pour les voir et 'vpn disconnect <pid>' pour les déconnecter" "$BLUE"
+        fi
+        return 1
     fi
 
     # Mode interactif : si un seul VPN connecté, le déconnecter directement
@@ -649,16 +765,18 @@ case "${1:-menu}" in
         echo "Usage: vpn [commande] [options]"
         echo ""
         echo "Commandes:"
-        echo "  connect [1-$(vpn_count)]      Se connecter à un VPN (cumulable)"
-        echo "  disconnect [id|numéro|all]    Se déconnecter d'un VPN spécifique"
-        echo "                                 - Sans argument : menu interactif"
-        echo "                                 - ID du VPN : ex. 'koesio-sso'"
-        echo "                                 - Numéro : ex. '1' (premier connecté)"
-        echo "                                 - 'all' : tout déconnecter"
-        echo "  status                        Afficher le statut de tous les VPNs actifs"
-        echo "  list                          Lister les VPNs disponibles"
-        echo "  menu                          Menu interactif (par défaut)"
-        echo "  help                          Afficher cette aide"
+        echo "  connect [1-$(vpn_count)]           Se connecter à un VPN (cumulable)"
+        echo "  disconnect [id|numéro|pid|all]  Se déconnecter d'un VPN spécifique"
+        echo "                                   - Sans argument : menu interactif"
+        echo "                                   - ID du VPN : ex. 'koesio-sso'"
+        echo "                                   - Numéro : ex. '1' (premier connecté)"
+        echo "                                   - PID : ex. '322169' (VPN non tracké)"
+        echo "                                   - 'all' : tout déconnecter"
+        echo "  status                          Afficher le statut de tous les VPNs"
+        echo "                                   (trackés et non trackés)"
+        echo "  list                            Lister les VPNs disponibles"
+        echo "  menu                            Menu interactif (par défaut)"
+        echo "  help                            Afficher cette aide"
         echo ""
         echo "Multi-VPN:"
         echo "  Les VPNs routant vers des réseaux différents peuvent"
@@ -668,13 +786,14 @@ case "${1:-menu}" in
         echo "  $VPN_CONF"
         echo ""
         echo "Exemples:"
-        echo "  vpn                      # Menu interactif"
-        echo "  vpn connect 1            # Se connecter au premier VPN"
-        echo "  vpn status               # Voir tous les VPNs actifs"
-        echo "  vpn disconnect           # Déconnexion interactive"
-        echo "  vpn disconnect koesio-sso  # Déconnecter un VPN spécifique"
-        echo "  vpn disconnect 2         # Déconnecter le 2e VPN connecté"
-        echo "  vpn disconnect all       # Tout déconnecter"
+        echo "  vpn                        # Menu interactif"
+        echo "  vpn connect 1              # Se connecter au premier VPN"
+        echo "  vpn status                 # Voir tous les VPNs (trackés et non trackés)"
+        echo "  vpn disconnect             # Déconnexion interactive"
+        echo "  vpn disconnect koesio-sso  # Déconnecter un VPN par ID"
+        echo "  vpn disconnect 2           # Déconnecter le 2e VPN connecté"
+        echo "  vpn disconnect 322169      # Déconnecter par PID (VPN non tracké)"
+        echo "  vpn disconnect all         # Tout déconnecter"
         ;;
     *)
         log "❌ Commande inconnue: $1" "$RED"

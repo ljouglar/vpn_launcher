@@ -8,10 +8,18 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [Unreleased]
 
 ### Ajouté
+- Détection des VPNs non trackés (processus orphelins)
+  - `vpn status` affiche maintenant les VPNs connectés mais non trackés
+  - Affichage du PID, IP et commande des VPNs orphelins
+  - Message d'aide pour les déconnecter
+- Déconnexion par PID pour gérer les VPNs non trackés
+  - `vpn disconnect <pid>` : déconnexion par PID (ex: `vpn disconnect 322169`)
+  - Vérifie que le PID est bien un processus openfortivpn
+  - Nettoie automatiquement les sessions orphelines associées
 - Déconnexion en ligne de commande avec arguments
   - `vpn disconnect <id>` : déconnexion par ID de VPN (ex: `vpn disconnect koesio-sso`)
   - `vpn disconnect <numéro>` : déconnexion par position (ex: `vpn disconnect 1`)
-  - `vpn disconnect all` : déconnexion de tous les VPNs
+  - `vpn disconnect all` : déconnexion de tous les VPNs (trackés et non trackés)
   - Mode interactif conservé si aucun argument fourni
 - Ouverture automatique du navigateur pour l'authentification SAML
   - Utilise `xdg-open` (standard Linux) avec fallbacks pour GNOME, KDE
@@ -23,6 +31,10 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   - Permet les mises à jour automatiques via `git pull`
   - Facilite le développement et les contributions
   - Documentation mise à jour en conséquence
+
+### Corrigé
+- Synchronisation entre l'état réel des VPNs et les fichiers de session
+- Les VPNs connectés en dehors du script sont maintenant visibles et gérables
 
 ## [1.0.0] - 2026-02-18
 
