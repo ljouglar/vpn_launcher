@@ -239,7 +239,7 @@ check_untracked_vpns() {
             echo ""
             untracked=$((untracked + 1))
         fi
-    done < <(ps aux | grep -E "[o]penfortivpn")
+    done < <(ps aux | grep -E "[o]penfortivpn" | awk '$11 == "openfortivpn" {print}')
     
     return $untracked
 }
@@ -692,8 +692,13 @@ connect() {
         else
             sudo -b openfortivpn "$saml_host" --saml-login > "$vpn_log" 2>&1
         fi
-        sleep 1
-        local vpn_pid=$(pgrep -n -f "openfortivpn.*$saml_host" 2>/dev/null)
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        # Extraire le hostname sans le port pour la recherche
+        local saml_host_base=$(echo "$saml_host" | cut -d':' -f1)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$saml_host_base" && echo "$pid" && break
+        done)
 
         # Attendre l'URL SAML (max 10s)
         echo -n "Démarrage"
@@ -784,13 +789,19 @@ connect() {
         fi
 
         sudo -b openfortivpn -c "$temp_config" --otp="$otp_code" > "$vpn_log" 2>&1
-        sleep 1
-        local vpn_pid=$(pgrep -n -f "openfortivpn.*$(basename "$temp_config")" 2>/dev/null)
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$(basename "$temp_config")" && echo "$pid" && break
+        done)
     else
         # === Mode password : background direct ===
         sudo -b openfortivpn -c "$temp_config" > "$vpn_log" 2>&1
-        sleep 1
-        local vpn_pid=$(pgrep -n -f "openfortivpn.*$(basename "$temp_config")" 2>/dev/null)
+        sleep 2
+        # Récupérer uniquement le PID du vrai processus openfortivpn (pas sudo)
+        local vpn_pid=$(pgrep -x openfortivpn | while read pid; do
+            ps -p "$pid" -o args= | grep -q "$(basename "$temp_config")" && echo "$pid" && break
+        done)
     fi
 
     echo -n "Connexion en cours"
