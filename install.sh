@@ -42,8 +42,8 @@ echo -e "${YELLOW}Création de la structure de dossiers...${NC}"
 
 mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$SESSION_DIR"
 
-# Copier le script principal
-SCRIPT_SOURCE="$(dirname "$0")/vpn"
+# Créer un lien symbolique vers le script principal
+SCRIPT_SOURCE="$(cd "$(dirname "$0")" && pwd)/vpn"
 SCRIPT_DEST="$HOME/vpn"
 
 if [ ! -f "$SCRIPT_SOURCE" ]; then
@@ -52,9 +52,16 @@ if [ ! -f "$SCRIPT_SOURCE" ]; then
 fi
 
 echo -e "${YELLOW}Installation du script vpn...${NC}"
-cp "$SCRIPT_SOURCE" "$SCRIPT_DEST"
-chmod +x "$SCRIPT_DEST"
-echo -e "${GREEN}✅ Script installé dans ~/vpn${NC}"
+
+# Supprimer le lien/fichier existant si présent
+if [ -L "$SCRIPT_DEST" ] || [ -f "$SCRIPT_DEST" ]; then
+    rm -f "$SCRIPT_DEST"
+fi
+
+# Créer le lien symbolique
+ln -s "$SCRIPT_SOURCE" "$SCRIPT_DEST"
+chmod +x "$SCRIPT_SOURCE"
+echo -e "${GREEN}✅ Lien symbolique créé : ~/vpn -> $SCRIPT_SOURCE${NC}"
 
 # Créer le fichier vpns.conf si inexistant
 VPNS_CONF="$VPN_DIR/vpns.conf"
@@ -334,11 +341,14 @@ echo -e "${GREEN}   ✅ Installation terminée avec succès !              ${NC}
 echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "${BLUE}📁 Structure installée :${NC}"
-echo "   ~/vpn                          → Script principal"
+echo "   ~/vpn                          → Lien symbolique vers le script"
 echo "   ~/.vpn/vpns.conf               → Configuration des VPNs"
 echo "   ~/.vpn/passwords.conf          → Mots de passe (chmod 600)"
 echo "   ~/.vpn/configs/                → Configurations openfortivpn"
 echo "   ~/.vpn/logs/                   → Logs de connexion"
+echo ""
+echo -e "${YELLOW}🔄 Pour mettre à jour le script :${NC}"
+echo "   cd $(dirname "$SCRIPT_SOURCE") && git pull"
 echo ""
 echo -e "${YELLOW}📋 Prochaines étapes :${NC}"
 echo "   1. Configurez vos VPNs dans ~/.vpn/vpns.conf"

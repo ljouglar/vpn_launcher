@@ -44,8 +44,8 @@ chmod +x vpn
 # Installation standard
 ./install.sh
 
-# Le script sera copié dans ~/vpn
-# Vous pouvez maintenant tester vos modifications en réinstallant
+# ~/vpn devient un lien symbolique vers le dépôt
+# Vos modifications sont immédiatement visibles, pas besoin de réinstaller !
 ```
 
 ## 🔧 Développement
@@ -63,12 +63,12 @@ Le fichier `vpn` est un script bash standalone qui contient toute la logique. St
 ### Tester vos modifications
 
 ```bash
-# Méthode 1 : Test direct (recommandé pour développement rapide)
+# Méthode 1 : Test direct (recommandé)
 ./vpn
 
-# Méthode 2 : Réinstaller et tester
-./install.sh
+# Méthode 2 : Via le lien symbolique (après installation)
 ~/vpn
+# Les modifications sont automatiquement visibles car ~/vpn est un lien symbolique
 
 # Méthode 3 : Test dans un conteneur/VM pour isoler
 docker run -it --rm ubuntu:22.04 bash

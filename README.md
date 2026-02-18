@@ -44,13 +44,27 @@ cd vpn_launcher
 Le script va :
 - ✅ Vérifier que `openfortivpn` est installé
 - ✅ Créer la structure de dossiers `~/.vpn/`
-- ✅ Installer le script `~/vpn`
+- ✅ Créer un lien symbolique `~/vpn` vers le script
 - ✅ Créer des fichiers de configuration template
 - ✅ Créer un README avec toute la documentation
+
+**Note** : `~/vpn` est un lien symbolique vers le dépôt cloné, ce qui permet de mettre à jour facilement.
 
 Après installation, consultez la documentation complète :
 ```bash
 cat ~/.vpn/README.md
+```
+
+## 🔄 Mise à jour
+
+```bash
+# Se rendre dans le dépôt cloné
+cd vpn_launcher
+
+# Mettre à jour
+git pull
+
+# Le script ~/vpn est automatiquement à jour (lien symbolique)
 ```
 
 ## 🔧 Configuration d'un VPN
