@@ -7,6 +7,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
 ## [Unreleased]
 
+### Ajouté
+- Ouverture automatique du navigateur pour l'authentification SAML
+  - Utilise `xdg-open` (standard Linux) avec fallbacks pour GNOME, KDE
+  - Essaie également Firefox, Chrome, Chromium si disponibles
+  - Message d'information si l'ouverture automatique échoue
+
 ### Modifié
 - `install.sh` crée maintenant un lien symbolique `~/vpn` au lieu de copier le script
   - Permet les mises à jour automatiques via `git pull`

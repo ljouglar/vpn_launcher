@@ -118,6 +118,34 @@ get_password() {
     fi
 }
 
+open_browser() {
+    local url="$1"
+    
+    # Essayer différentes commandes pour ouvrir le navigateur
+    # xdg-open est le standard sur Linux (fonctionne avec GNOME, KDE, XFCE, etc.)
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$url" &> /dev/null &
+        return 0
+    elif command -v gnome-open &> /dev/null; then
+        gnome-open "$url" &> /dev/null &
+        return 0
+    elif command -v kde-open &> /dev/null; then
+        kde-open "$url" &> /dev/null &
+        return 0
+    elif command -v firefox &> /dev/null; then
+        firefox "$url" &> /dev/null &
+        return 0
+    elif command -v google-chrome &> /dev/null; then
+        google-chrome "$url" &> /dev/null &
+        return 0
+    elif command -v chromium &> /dev/null; then
+        chromium "$url" &> /dev/null &
+        return 0
+    else
+        return 1
+    fi
+}
+
 # ============================================================
 #  Gestion de session / statut
 # ============================================================
@@ -369,12 +397,22 @@ connect() {
                     echo ""
                     echo ""
                     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-                    echo -e "${YELLOW}🌐 Ouvrez cette URL dans votre navigateur :${NC}"
+                    echo -e "${YELLOW}🌐 Authentification SSO requise${NC}"
                     echo ""
                     echo -e "  ${GREEN}$auth_url${NC}"
                     echo ""
                     echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
                     echo ""
+                    
+                    # Essayer d'ouvrir automatiquement le navigateur
+                    if open_browser "$auth_url"; then
+                        echo -e "${GREEN}✅ Navigateur ouvert automatiquement${NC}"
+                    else
+                        echo -e "${YELLOW}⚠️  Impossible d'ouvrir le navigateur automatiquement${NC}"
+                        echo -e "${YELLOW}   Veuillez ouvrir l'URL ci-dessus manuellement${NC}"
+                    fi
+                    echo ""
+                    
                     break
                 fi
             fi
