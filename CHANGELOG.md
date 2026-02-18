@@ -8,6 +8,11 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [Unreleased]
 
 ### Ajouté
+- **Nettoyage interactif des VPNs fantômes**
+  - Si vous utilisez `vpn disconnect` sans connexions trackées mais avec des VPNs fantômes
+  - Le script propose automatiquement de les nettoyer
+  - Confirmation interactive avant le nettoyage
+  - Utilise la fonction `cleanup_orphans()` pour un nettoyage complet
 - Détection des VPNs non trackés (processus orphelins)
   - `vpn status` affiche maintenant les VPNs connectés mais non trackés
   - Affichage du PID, IP et commande des VPNs orphelins

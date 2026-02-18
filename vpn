@@ -382,6 +382,73 @@ disconnect_one() {
     log "✅ $vpn_id déconnecté" "$GREEN"
 }
 
+cleanup_orphans() {
+    local cleaned=0
+    
+    echo ""
+    log "🧹 Nettoyage des processus et interfaces orphelins..." "$BLUE"
+    
+    # 1. Nettoyer les processus openfortivpn orphelins (non trackés)
+    local tracked_pids=()
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        [ -n "$pid" ] && tracked_pids+=("$pid")
+    done
+    
+    while IFS= read -r line; do
+        local pid=$(echo "$line" | awk '{print $2}')
+        
+        # Vérifier si ce PID est tracké
+        local is_tracked=false
+        for tracked in "${tracked_pids[@]}"; do
+            if [ "$tracked" = "$pid" ]; then
+                is_tracked=true
+                break
+            fi
+        done
+        
+        if [ "$is_tracked" = false ]; then
+            log "  Arrêt du processus orphelin (PID: $pid)..." "$YELLOW"
+            sudo kill -9 "$pid" 2>/dev/null
+            sleep 0.5
+            if ! [ -d "/proc/$pid" ]; then
+                cleaned=$((cleaned + 1))
+            fi
+        fi
+    done < <(ps aux | grep -E "[o]penfortivpn" 2>/dev/null || true)
+    
+    # 2. Nettoyer les interfaces ppp orphelines
+    sleep 1
+    local active_vpns=$(ps aux | grep -E "[o]penfortivpn" 2>/dev/null | wc -l)
+    if [ "$active_vpns" -eq 0 ]; then
+        while IFS= read -r ppp_if; do
+            log "  Suppression de l'interface orpheline: $ppp_if" "$YELLOW"
+            sudo ip link delete "$ppp_if" 2>/dev/null && cleaned=$((cleaned + 1))
+        done < <(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' || true)
+    fi
+    
+    # 3. Nettoyer les fichiers de session orphelins
+    for session_file in "$SESSION_DIR"/.session_*; do
+        [ -f "$session_file" ] || continue
+        local pid=$(cat "$session_file" 2>/dev/null)
+        if [ -n "$pid" ] && ! [ -d "/proc/$pid" ]; then
+            log "  Nettoyage de la session orpheline: $(basename "$session_file")" "$YELLOW"
+            rm -f "$session_file"
+            cleaned=$((cleaned + 1))
+        fi
+    done
+    
+    echo ""
+    if [ "$cleaned" -gt 0 ]; then
+        log "✅ Nettoyage terminé ($cleaned éléments nettoyés)" "$GREEN"
+    else
+        log "✅ Rien à nettoyer" "$GREEN"
+    fi
+    
+    return "$cleaned"
+}
+
 disconnect() {
     local target="$1"
 
@@ -460,8 +527,21 @@ disconnect() {
         # Vérifier s'il y a des VPNs non trackés
         if ps aux | grep -E "[o]penfortivpn" &>/dev/null; then
             echo ""
-            log "⚠️  Il semble y avoir des VPNs non trackés actifs" "$YELLOW"
-            log "💡 Utilisez 'vpn status' pour les voir et 'vpn disconnect <pid>' pour les déconnecter" "$BLUE"
+            log "⚠️  Des VPNs fantômes ont été détectés (non trackés par le script)" "$YELLOW"
+            read -p "Voulez-vous nettoyer ces connexions fantômes ? (o/N) " cleanup_choice
+            
+            if [[ "$cleanup_choice" =~ ^[oO]$ ]]; then
+                echo ""
+                log "🧹 Nettoyage des connexions fantômes en cours..." "$BLUE"
+                local cleaned_count=$(cleanup_orphans)
+                if [ "$cleaned_count" -gt 0 ]; then
+                    log "✅ $cleaned_count élément(s) nettoyé(s)" "$GREEN"
+                else
+                    log "ℹ️  Aucun élément à nettoyer" "$BLUE"
+                fi
+            else
+                log "💡 Vous pouvez aussi utiliser 'vpn status' pour voir les détails et 'vpn disconnect <pid>' pour déconnecter manuellement" "$BLUE"
+            fi
         fi
         return 1
     fi
