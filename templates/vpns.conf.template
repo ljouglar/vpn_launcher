@@ -1,0 +1,29 @@
+# Configuration des VPN
+# Format INI : chaque section [id] définit un VPN
+#
+# Propriétés :
+#   name           = Nom affiché (obligatoire)
+#   auth           = Mode d'authentification : password | 2fa | saml (obligatoire)
+#   config         = Fichier de config openfortivpn dans ~/.vpn/configs/ (pour password et 2fa)
+#   saml_host      = Hôte:port pour authentification SAML (pour saml)
+#   saml_cert      = Certificat de confiance pour SAML (pour saml)
+#   timeout        = Timeout de connexion en secondes (défaut : 20 pour password, 30 pour 2fa, 60 pour saml)
+
+# Exemple : VPN avec authentification par mot de passe
+# [mon-vpn]
+# name = Mon VPN Corporate
+# auth = password
+# config = mon-vpn.conf
+
+# Exemple : VPN avec authentification 2FA (FortiToken)
+# [vpn-prod]
+# name = Production VPN
+# auth = 2fa
+# config = vpn-prod.conf
+
+# Exemple : VPN avec authentification SAML (SSO)
+# [vpn-sso]
+# name = SSO VPN
+# auth = saml
+# saml_host = vpn.example.com:444
+# saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1

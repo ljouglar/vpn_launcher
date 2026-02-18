@@ -1,0 +1,17 @@
+# Exemple de configuration openfortivpn
+# Copiez ce fichier et adaptez-le pour chaque VPN
+#
+# Pour obtenir le certificat d'un serveur VPN :
+# echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
+#
+# IMPORTANT : Ce fichier contient des informations sensibles (mot de passe)
+# Il sera automatiquement protégé avec chmod 600
+
+host = vpn.example.com
+port = 443
+username = votre.nom@example.com
+password = votre_mot_de_passe_secret
+trusted-cert = votre_certificat_sha256_ici
+set-routes = 1
+set-dns = 0
+pppd-use-peerdns = 0

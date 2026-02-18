@@ -1,366 +1,244 @@
 #!/bin/bash
-# Script d'installation VPN Manager
+# Script d'installation VPN Manager - Version optimisée
 # Ce script installe et configure le gestionnaire VPN multi-connexions
 
 set -e
 
-# Couleurs
+# === Couleurs ===
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}══════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}   Installation du Gestionnaire VPN Multi-Connexions ${NC}"
-echo -e "${BLUE}══════════════════════════════════════════════════════${NC}"
-echo ""
+# === Fonctions utilitaires ===
+log_info() { echo -e "${BLUE}$1${NC}"; }
+log_success() { echo -e "${GREEN}✅ $1${NC}"; }
+log_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
+log_error() { echo -e "${RED}❌ $1${NC}"; }
 
-# Vérifier les prérequis
-echo -e "${YELLOW}Vérification des prérequis...${NC}"
+# === Détection des chemins ===
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_SOURCE="$INSTALL_DIR/vpn"
+LIB_SOURCE="$INSTALL_DIR/lib"
+TEMPLATES_DIR="$INSTALL_DIR/templates"
 
-if ! command -v openfortivpn &> /dev/null; then
-    echo -e "${RED}❌ openfortivpn n'est pas installé${NC}"
-    echo ""
-    echo "Pour installer openfortivpn :"
-    echo "  • Ubuntu/Debian: sudo apt install openfortivpn"
-    echo "  • Fedora/RHEL:   sudo dnf install openfortivpn"
-    echo "  • Arch:          sudo pacman -S openfortivpn"
-    exit 1
-fi
-
-echo -e "${GREEN}✅ openfortivpn est installé${NC}"
-
-# Créer la structure de dossiers
 VPN_DIR="$HOME/.vpn"
 CONFIG_DIR="$VPN_DIR/configs"
 LOG_DIR="$VPN_DIR/logs"
 SESSION_DIR="$VPN_DIR/sessions"
+LIB_DIR="$VPN_DIR/lib"
 
-echo ""
-echo -e "${YELLOW}Création de la structure de dossiers...${NC}"
-
-mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$SESSION_DIR"
-
-# Créer un lien symbolique vers le script principal
-SCRIPT_SOURCE="$(cd "$(dirname "$0")" && pwd)/vpn"
 SCRIPT_DEST="$HOME/vpn"
-
-if [ ! -f "$SCRIPT_SOURCE" ]; then
-    echo -e "${RED}❌ Le fichier 'vpn' n'a pas été trouvé dans le dossier d'installation${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}Installation du script vpn...${NC}"
-
-# Supprimer le lien/fichier existant si présent
-if [ -L "$SCRIPT_DEST" ] || [ -f "$SCRIPT_DEST" ]; then
-    rm -f "$SCRIPT_DEST"
-fi
-
-# Créer le lien symbolique
-ln -s "$SCRIPT_SOURCE" "$SCRIPT_DEST"
-chmod +x "$SCRIPT_SOURCE"
-echo -e "${GREEN}✅ Lien symbolique créé : ~/vpn -> $SCRIPT_SOURCE${NC}"
-
-# Créer le fichier vpns.conf si inexistant
 VPNS_CONF="$VPN_DIR/vpns.conf"
-if [ ! -f "$VPNS_CONF" ]; then
-    echo -e "${YELLOW}Création du fichier de configuration...${NC}"
-    cat > "$VPNS_CONF" << 'EOF'
-# Configuration des VPN
-# Format INI : chaque section [id] définit un VPN
-#
-# Propriétés :
-#   name           = Nom affiché (obligatoire)
-#   auth           = Mode d'authentification : password | 2fa | saml (obligatoire)
-#   config         = Fichier de config openfortivpn dans ~/.vpn/configs/ (pour password et 2fa)
-#   saml_host      = Hôte:port pour authentification SAML (pour saml)
-#   saml_cert      = Certificat de confiance pour SAML (pour saml)
-#   timeout        = Timeout de connexion en secondes (défaut : 20 pour password, 30 pour 2fa, 60 pour saml)
 
-# Exemple : VPN avec authentification par mot de passe
-# [mon-vpn]
-# name = Mon VPN Corporate
-# auth = password
-# config = mon-vpn.conf
-
-# Exemple : VPN avec authentification 2FA (FortiToken)
-# [vpn-prod]
-# name = Production VPN
-# auth = 2fa
-# config = vpn-prod.conf
-
-# Exemple : VPN avec authentification SAML (SSO)
-# [vpn-sso]
-# name = SSO VPN
-# auth = saml
-# saml_host = vpn.example.com:444
-# saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
-
-EOF
-    echo -e "${GREEN}✅ Fichier de configuration créé${NC}"
-else
-    echo -e "${BLUE}ℹ️  Le fichier vpns.conf existe déjà, il n'a pas été modifié${NC}"
-fi
-
-# Créer un exemple de configuration openfortivpn
-EXAMPLE_CONF="$CONFIG_DIR/example.conf"
-if [ ! -f "$EXAMPLE_CONF" ]; then
-    echo -e "${YELLOW}Création d'un exemple de configuration openfortivpn...${NC}"
-    cat > "$EXAMPLE_CONF" << 'EOF'
-# Exemple de configuration openfortivpn
-# Copiez ce fichier et adaptez-le pour chaque VPN
-#
-# Pour obtenir le certificat d'un serveur VPN :
-# echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
-#
-# IMPORTANT : Ce fichier contient des informations sensibles (mot de passe)
-# Il sera automatiquement protégé avec chmod 600
-
-host = vpn.example.com
-port = 443
-username = votre.nom@example.com
-password = votre_mot_de_passe_secret
-trusted-cert = votre_certificat_sha256_ici
-set-routes = 1
-set-dns = 0
-pppd-use-peerdns = 0
-
-EOF
-    chmod 600 "$EXAMPLE_CONF"
-    echo -e "${GREEN}✅ Exemple de configuration créé (chmod 600)${NC}"
-fi
-
-# Protéger tous les fichiers .conf existants
-echo -e "${YELLOW}Protection des fichiers de configuration...${NC}"
-find "$CONFIG_DIR" -type f -name "*.conf" -exec chmod 600 {} \;
-echo -e "${GREEN}✅ Permissions des fichiers .conf définies à 600${NC}"
-
-# Créer le README
-README_FILE="$VPN_DIR/README.md"
-if [ ! -f "$README_FILE" ]; then
-    echo -e "${YELLOW}Création du README...${NC}"
-    cat > "$README_FILE" << 'EOF'
-# VPN Manager - Guide de configuration 🚀
-
-## 📋 Prérequis
-
-- `openfortivpn` doit être installé
-- Accès sudo pour établir les connexions VPN
-
-## 🔧 Configuration
-
-### 1. Obtenir les informations du serveur VPN
-
-Pour chaque VPN, vous avez besoin de :
-- **Hôte et port** (ex: vpn.example.com:443)
-- **Nom d'utilisateur**
-- **Certificat SSL** (fingerprint SHA256)
-- **Mot de passe**
-- **Mode d'authentification** (password, 2fa ou saml)
-
-### 2. Récupérer le certificat SSL
-
-```bash
-echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
-```
-
-Exemple de sortie :
-```
-SHA256 Fingerprint=4D:49:0E:C4:D0:4B:59:C6:C2:C0:6F:E5:A0:D5:74:89:44:AA:35:BD:DA:A5:C3:6A:86:8D:9B:2F:E7:6F:5F:42
-```
-
-Utilisez la valeur sans les `:` → `4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42`
-
-### 3. Créer un fichier de configuration openfortivpn
-
-Dans `~/.vpn/configs/`, créez un fichier pour chaque VPN (ex: `mon-vpn.conf`) :
-
-```properties
-host = vpn.example.com
-port = 443
-username = votre.nom@example.com
-password = votre_mot_de_passe_secret
-trusted-cert = 4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42
-set-routes = 1
-set-dns = 0
-pppd-use-peerdns = 0
-```
-
-**Note** : Le mot de passe est directement dans le fichier .conf. Il sera protégé avec chmod 600.
-
-### 4. Déclarer le VPN dans vpns.conf
-
-Éditez `~/.vpn/vpns.conf` et ajoutez une section :
-
-**Pour un VPN avec mot de passe simple :**
-```ini
-[mon-vpn]
-name = Mon VPN Corporate
-auth = password
-config = mon-vpn.conf
-```
-
-**Pour un VPN avec 2FA (FortiToken) :**
-```ini
-[vpn-prod]
-name = Production VPN
-auth = 2fa
-config = vpn-prod.conf
-```
-
-**Pour un VPN avec SAML/SSO :**
-```ini
-[vpn-sso]
-name = SSO VPN
-auth = saml
-saml_host = vpn.example.com:444
-saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
-```
-
-## 🚀 Utilisation
-
-### Lancer le menu interactif
-```bash
-~/vpn
-```
-
-### Commandes directes
-```bash
-~/vpn connect 1      # Se connecter au VPN #1
-~/vpn status         # Voir le statut
-~/vpn disconnect     # Se déconnecter
-~/vpn list           # Lister les VPNs
-~/vpn help           # Aide
-```
-
-### Connexion rapide
-```bash
-~/vpn c 1    # Connecter au VPN #1
-~/vpn d      # Déconnecter
-~/vpn s      # Statut
-```
-
-## 📝 Logs
-
-```bash
-# Logs généraux
-tail -f ~/.vpn/logs/vpn.log
-
-# Logs d'une connexion spécifique
-tail -f ~/.vpn/logs/mon-vpn.log
-```
-
-## 🔐 Sécurité
-
-- Les fichiers `.conf` contiennent des informations sensibles et sont protégés (chmod 600)
-- Les mots de passe ne sont jamais affichés dans les logs
-- N'ajoutez jamais les fichiers `*.conf` à votre gestionnaire de versions
-
-## 🆘 Dépannage
-
-### Connexion échoue
-1. Vérifiez les logs : `tail -f ~/.vpn/logs/mon-vpn.log`
-2. Vérifiez le certificat SSL du serveur
-3. Testez manuellement : `sudo openfortivpn -c ~/.vpn/configs/mon-vpn.conf`
-
-### Interface réseau non créée
-- Vérifiez que `pppd` est installé : `which pppd`
-- Vérifiez les droits sudo
-
-## 🌟 Fonctionnalités
-
-✅ Multi-VPN : connectez-vous à plusieurs VPNs simultanément
-✅ 1 seule interface par VPN (pas d'interfaces fantômes)
-✅ Support password, 2FA et SAML
-✅ Nettoyage automatique à la déconnexion
-✅ Logs détaillés pour le dépannage
-✅ Gestion de mots de passe sécurisée
-✅ Menu interactif simple
-
-EOF
-    echo -e "${GREEN}✅ README créé${NC}"
-fi
-
-# Ajouter au PATH si nécessaire (optionnel)
-echo ""
-echo -e "${YELLOW}Configuration du PATH (optionnel)...${NC}"
-
-if [[ ":$PATH:" != *":$HOME:"* ]]; then
-    echo -e "${BLUE}Le dossier ~/vpn n'est pas dans le PATH${NC}"
-    echo -e "${YELLOW}Pour exécuter 'vpn' depuis n'importe où, ajoutez cette ligne à votre ~/.bashrc ou ~/.zshrc :${NC}"
-    echo ""
-    echo "  export PATH=\"\$HOME:\$PATH\""
-    echo ""
-    read -p "Voulez-vous l'ajouter automatiquement à ~/.bashrc ? (o/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Oo]$ ]]; then
-        if ! grep -q "# VPN Manager PATH" "$HOME/.bashrc"; then
-            echo "" >> "$HOME/.bashrc"
-            echo "# VPN Manager PATH" >> "$HOME/.bashrc"
-            echo "export PATH=\"\$HOME:\$PATH\"" >> "$HOME/.bashrc"
-            echo -e "${GREEN}✅ PATH ajouté à ~/.bashrc${NC}"
-            echo -e "${YELLOW}Exécutez 'source ~/.bashrc' ou ouvrez un nouveau terminal${NC}"
-        else
-            echo -e "${BLUE}ℹ️  PATH déjà présent dans ~/.bashrc${NC}"
-        fi
-    fi
-else
-    echo -e "${GREEN}✅ Le script vpn est déjà accessible${NC}"
-fi
-
-# Résumé final
-echo ""
-echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}   ✅ Installation terminée avec succès !              ${NC}"
-echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
-echo ""
-echo -e "${BLUE}📁 Structure installée :${NC}"
-echo "   ~/vpn                          → Lien symbolique vers le script"
-echo "   ~/.vpn/vpns.conf               → Configuration des VPNs"
-echo "   ~/.vpn/configs/                → Configurations openfortivpn (chmod 600)"
-echo "   ~/.vpn/logs/                   → Logs de connexion"
-echo ""
-echo -e "${YELLOW}🔄 Pour mettre à jour le script :${NC}"
-echo "   cd $(dirname "$SCRIPT_SOURCE") && git pull"
-echo ""
-
-# Proposer le configurateur si aucun VPN n'est configuré
-VPN_COUNT=$(grep -c "^\[.*\]$" "$VPNS_CONF" 2>/dev/null || echo "0")
-
-if [ "$VPN_COUNT" -eq 0 ]; then
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}   Aucun VPN configuré - Configuration recommandée         ${NC}"
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo -e "${BLUE}Voulez-vous configurer votre premier VPN maintenant ?${NC}"
-    echo ""
-    read -p "Lancer le configurateur ? (O/n) : " -n 1 -r
+# === Vérification des prérequis ===
+check_prerequisites() {
+    echo -e "${BLUE}══════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}   Installation du Gestionnaire VPN Multi-Connexions ${NC}"
+    echo -e "${BLUE}══════════════════════════════════════════════════════${NC}"
     echo ""
     
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    log_info "Vérification des prérequis..."
+    
+    if ! command -v openfortivpn &> /dev/null; then
+        log_error "openfortivpn n'est pas installé"
         echo ""
-        "$SCRIPT_DEST" configure
-    else
-        echo ""
-        echo -e "${BLUE}Vous pourrez le faire plus tard avec :${NC}"
-        echo "   ~/vpn configure"
-        echo ""
+        echo "Pour installer openfortivpn :"
+        echo "  • Ubuntu/Debian: sudo apt install openfortivpn"
+        echo "  • Fedora/RHEL:   sudo dnf install openfortivpn"
+        echo "  • Arch:          sudo pacman -S openfortivpn"
+        exit 1
     fi
-else
-    echo -e "${BLUE}💡 VPNs configurés : $VPN_COUNT${NC}"
-    echo ""
-    echo -e "${YELLOW}Pour ajouter un nouveau VPN :${NC}"
-    echo "   ~/vpn configure"
-    echo ""
-fi
+    
+    log_success "openfortivpn est installé"
+    
+    if [ ! -f "$SCRIPT_SOURCE" ]; then
+        log_error "Le fichier 'vpn' n'a pas été trouvé dans $INSTALL_DIR"
+        exit 1
+    fi
+    
+    if [ ! -d "$LIB_SOURCE" ]; then
+        log_error "Le dossier 'lib/' n'a pas été trouvé dans $INSTALL_DIR"
+        exit 1
+    fi
+}
 
-echo -e "${YELLOW}📋 Commandes utiles :${NC}"
-echo "   ~/vpn                  # Menu interactif"
-echo "   ~/vpn configure        # Créer un nouveau VPN"
-echo "   ~/vpn list             # Lister les VPNs"
-echo "   ~/vpn help             # Aide complète"
-echo ""
-echo -e "${BLUE}📖 Documentation complète : cat ~/.vpn/README.md${NC}"
-echo ""
+# === Création de la structure ===
+create_structure() {
+    echo ""
+    log_info "Création de la structure de dossiers..."
+    
+    mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$SESSION_DIR" "$LIB_DIR"
+    log_success "Dossiers créés"
+}
+
+# === Installation du script principal ===
+install_script() {
+    log_info "Installation du script vpn..."
+    
+    # Supprimer le lien/fichier existant
+    [ -L "$SCRIPT_DEST" ] || [ -f "$SCRIPT_DEST" ] && rm -f "$SCRIPT_DEST"
+    
+    # Créer le lien symbolique
+    ln -s "$SCRIPT_SOURCE" "$SCRIPT_DEST"
+    chmod +x "$SCRIPT_SOURCE"
+    
+    log_success "Lien symbolique créé : ~/vpn -> $SCRIPT_SOURCE"
+}
+
+# === Installation des modules ===
+install_libraries() {
+    log_info "Installation des modules..."
+    
+    cp -r "$LIB_SOURCE"/* "$LIB_DIR/"
+    chmod +x "$LIB_DIR"/*.sh
+    
+    log_success "Modules installés dans $LIB_DIR"
+}
+
+# === Installation des templates ===
+install_templates() {
+    log_info "Installation des configurations..."
+    
+    # vpns.conf
+    if [ ! -f "$VPNS_CONF" ]; then
+        cp "$TEMPLATES_DIR/vpns.conf.template" "$VPNS_CONF"
+        log_success "Fichier vpns.conf créé"
+    else
+        log_info "Le fichier vpns.conf existe déjà"
+    fi
+    
+    # example.conf
+    local example_conf="$CONFIG_DIR/example.conf"
+    if [ ! -f "$example_conf" ]; then
+        cp "$TEMPLATES_DIR/example.conf.template" "$example_conf"
+        chmod 600 "$example_conf"
+        log_success "Exemple de configuration créé (chmod 600)"
+    fi
+    
+    # README.md
+    local readme="$VPN_DIR/README.md"
+    if [ ! -f "$readme" ]; then
+        cp "$TEMPLATES_DIR/README.md.template" "$readme"
+        log_success "README créé"
+    fi
+}
+
+# === Protection des fichiers sensibles ===
+secure_configs() {
+    log_info "Protection des fichiers de configuration..."
+    find "$CONFIG_DIR" -type f -name "*.conf" -exec chmod 600 {} \;
+    log_success "Permissions des fichiers .conf définies à 600"
+}
+
+# === Configuration du PATH ===
+configure_path() {
+    echo ""
+    log_info "Configuration du PATH (optionnel)..."
+    
+    if [[ ":$PATH:" == *":$HOME:"* ]]; then
+        log_success "Le script vpn est déjà accessible"
+        return
+    fi
+    
+    log_warning "Le dossier ~/vpn n'est pas dans le PATH"
+    echo ""
+    echo "Pour exécuter 'vpn' depuis n'importe où, ajoutez cette ligne à votre ~/.bashrc :"
+    echo "  export PATH=\"\$HOME:\$PATH\""
+    echo ""
+    
+    read -p "Voulez-vous l'ajouter automatiquement à ~/.bashrc ? (o/N) " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Oo]$ ]]; then
+        if ! grep -q "# VPN Manager PATH" "$HOME/.bashrc"; then
+            {
+                echo ""
+                echo "# VPN Manager PATH"
+                echo "export PATH=\"\$HOME:\$PATH\""
+            } >> "$HOME/.bashrc"
+            log_success "PATH ajouté à ~/.bashrc"
+            log_warning "Exécutez 'source ~/.bashrc' ou ouvrez un nouveau terminal"
+        else
+            log_info "PATH déjà présent dans ~/.bashrc"
+        fi
+    fi
+}
+
+# === Résumé de l'installation ===
+show_summary() {
+    echo ""
+    echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}   ✅ Installation terminée avec succès !              ${NC}"
+    echo -e "${GREEN}══════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BLUE}📁 Structure installée :${NC}"
+    echo "   ~/vpn                          → Lien symbolique vers le script"
+    echo "   ~/.vpn/vpns.conf               → Configuration des VPNs"
+    echo "   ~/.vpn/configs/                → Configurations openfortivpn (chmod 600)"
+    echo "   ~/.vpn/logs/                   → Logs de connexion"
+    echo "   ~/.vpn/lib/                    → Modules du script"
+    echo ""
+    echo -e "${YELLOW}🔄 Pour mettre à jour le script :${NC}"
+    echo "   cd $INSTALL_DIR && git pull && ./install.sh"
+    echo ""
+}
+
+# === Proposition du configurateur ===
+offer_configurator() {
+    local vpn_count=$(grep -c "^\[.*\]$" "$VPNS_CONF" 2>/dev/null || echo "0")
+    
+    if [ "$vpn_count" -eq 0 ]; then
+        echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}   Aucun VPN configuré - Configuration recommandée         ${NC}"
+        echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo -e "${BLUE}Voulez-vous configurer votre premier VPN maintenant ?${NC}"
+        echo ""
+        
+        read -p "Lancer le configurateur ? (O/n) : " -n 1 -r
+        echo ""
+        
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            echo ""
+            "$SCRIPT_DEST" configure
+        else
+            echo ""
+            log_info "Vous pourrez le faire plus tard avec : ~/vpn configure"
+        fi
+    else
+        log_info "VPNs configurés : $vpn_count"
+        echo ""
+        log_warning "Pour ajouter un nouveau VPN : ~/vpn configure"
+    fi
+}
+
+# === Affichage des commandes utiles ===
+show_usage() {
+    echo ""
+    echo -e "${YELLOW}📋 Commandes utiles :${NC}"
+    echo "   ~/vpn                  # Menu interactif"
+    echo "   ~/vpn configure        # Créer un nouveau VPN"
+    echo "   ~/vpn list             # Lister les VPNs"
+    echo "   ~/vpn help             # Aide complète"
+    echo ""
+    echo -e "${BLUE}📖 Documentation complète : cat ~/.vpn/README.md${NC}"
+    echo ""
+}
+
+# === Point d'entrée principal ===
+main() {
+    check_prerequisites
+    create_structure
+    install_script
+    install_libraries
+    install_templates
+    secure_configs
+    configure_path
+    show_summary
+    offer_configurator
+    show_usage
+}
+
+main

@@ -1,0 +1,136 @@
+# VPN Manager - Guide de configuration 🚀
+
+## 📋 Prérequis
+
+- `openfortivpn` doit être installé
+- Accès sudo pour établir les connexions VPN
+
+## 🔧 Configuration
+
+### 1. Obtenir les informations du serveur VPN
+
+Pour chaque VPN, vous avez besoin de :
+- **Hôte et port** (ex: vpn.example.com:443)
+- **Nom d'utilisateur**
+- **Certificat SSL** (fingerprint SHA256)
+- **Mot de passe**
+- **Mode d'authentification** (password, 2fa ou saml)
+
+### 2. Récupérer le certificat SSL
+
+```bash
+echo | openssl s_client -connect SERVEUR:PORT 2>/dev/null | openssl x509 -fingerprint -noout -sha256
+```
+
+Exemple de sortie :
+```
+SHA256 Fingerprint=4D:49:0E:C4:D0:4B:59:C6:C2:C0:6F:E5:A0:D5:74:89:44:AA:35:BD:DA:A5:C3:6A:86:8D:9B:2F:E7:6F:5F:42
+```
+
+Utilisez la valeur sans les `:` → `4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42`
+
+### 3. Créer un fichier de configuration openfortivpn
+
+Dans `~/.vpn/configs/`, créez un fichier pour chaque VPN (ex: `mon-vpn.conf`) :
+
+```properties
+host = vpn.example.com
+port = 443
+username = votre.nom@example.com
+password = votre_mot_de_passe_secret
+trusted-cert = 4d490ec4d04b59c6c2c06fe5a0d5748944aa35bddaa5c36a868d9b2fe76f5f42
+set-routes = 1
+set-dns = 0
+pppd-use-peerdns = 0
+```
+
+**Note** : Le mot de passe est directement dans le fichier .conf. Il sera protégé avec chmod 600.
+
+### 4. Déclarer le VPN dans vpns.conf
+
+Éditez `~/.vpn/vpns.conf` et ajoutez une section :
+
+**Pour un VPN avec mot de passe simple :**
+```ini
+[mon-vpn]
+name = Mon VPN Corporate
+auth = password
+config = mon-vpn.conf
+```
+
+**Pour un VPN avec 2FA (FortiToken) :**
+```ini
+[vpn-prod]
+name = Production VPN
+auth = 2fa
+config = vpn-prod.conf
+```
+
+**Pour un VPN avec SAML/SSO :**
+```ini
+[vpn-sso]
+name = SSO VPN
+auth = saml
+saml_host = vpn.example.com:444
+saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
+```
+
+## 🚀 Utilisation
+
+### Lancer le menu interactif
+```bash
+~/vpn
+```
+
+### Commandes directes
+```bash
+~/vpn connect 1      # Se connecter au VPN #1
+~/vpn status         # Voir le statut
+~/vpn disconnect     # Se déconnecter
+~/vpn list           # Lister les VPNs
+~/vpn help           # Aide
+```
+
+### Connexion rapide
+```bash
+~/vpn c 1    # Connecter au VPN #1
+~/vpn d      # Déconnecter
+~/vpn s      # Statut
+```
+
+## 📝 Logs
+
+```bash
+# Logs généraux
+tail -f ~/.vpn/logs/vpn.log
+
+# Logs d'une connexion spécifique
+tail -f ~/.vpn/logs/mon-vpn.log
+```
+
+## 🔐 Sécurité
+
+- Les fichiers `.conf` contiennent des informations sensibles et sont protégés (chmod 600)
+- Les mots de passe ne sont jamais affichés dans les logs
+- N'ajoutez jamais les fichiers `*.conf` à votre gestionnaire de versions
+
+## 🆘 Dépannage
+
+### Connexion échoue
+1. Vérifiez les logs : `tail -f ~/.vpn/logs/mon-vpn.log`
+2. Vérifiez le certificat SSL du serveur
+3. Testez manuellement : `sudo openfortivpn -c ~/.vpn/configs/mon-vpn.conf`
+
+### Interface réseau non créée
+- Vérifiez que `pppd` est installé : `which pppd`
+- Vérifiez les droits sudo
+
+## 🌟 Fonctionnalités
+
+✅ Multi-VPN : connectez-vous à plusieurs VPNs simultanément
+✅ 1 seule interface par VPN (pas d'interfaces fantômes)
+✅ Support password, 2FA et SAML
+✅ Nettoyage automatique à la déconnexion
+✅ Logs détaillés pour le dépannage
+✅ Gestion de mots de passe sécurisée
+✅ Menu interactif simple
