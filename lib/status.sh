@@ -80,14 +80,14 @@ check_status() {
 }
 
 list_vpns() {
-    echo "VPNs disponibles:"
+    echo -e "${BLUE}VPNs disponibles:${NC}"
     local count=$(vpn_count)
     for i in $(seq 1 "$count"); do
         local vpn_id=$(vpn_id_at "$i")
         local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
         
         if is_vpn_connected "$vpn_id"; then
-            echo "  $i) ● $display_name"
+            echo -e "  $i) ${GREEN}● $display_name${NC}"
         else
             echo "  $i) $display_name"
         fi
