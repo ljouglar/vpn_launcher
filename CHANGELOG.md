@@ -32,6 +32,12 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
   - Message d'information si l'ouverture automatique échoue
 
 ### Corrigé
+- **Déconnexion SAML améliorée** : Kill plus robuste des processus VPN
+  - Lancement SAML aligné avec password/2FA (sans `bash -c`)
+  - Utilisation de SIGTERM au lieu de SIGINT pour une terminaison plus propre
+  - Kill des processus enfants avant le processus parent
+  - Timeouts augmentés pour laisser le temps aux processus de se terminer
+  - Ordre d'élimination : enfants SIGTERM → parent SIGTERM → enfants SIGKILL → parent SIGKILL
 - **Déconnexion robuste** : Vérification que le processus est vraiment tué
   - Le fichier de session n'est supprimé que si le processus est confirmé mort
   - Message d'erreur si le processus ne peut pas être tué
