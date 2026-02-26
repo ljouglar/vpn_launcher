@@ -13,6 +13,7 @@ show_menu() {
     echo "  c) Se connecter"
     echo "  d) Se déconnecter"
     echo "  s) Statut"
+    echo "  n) Configurer un nouveau VPN"
     echo "  q) Quitter"
     echo ""
     read -p "Votre choix: " choice
@@ -21,9 +22,10 @@ show_menu() {
         c|C) connect ;;
         d|D) disconnect ;;
         s|S) check_status ;;
+        n|N) configure_vpn ;;
         q|Q) exit 0 ;;
         *)
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$count" -gt 0 ] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
                 connect "$choice"
             else
                 log "❌ Choix invalide" "$RED"

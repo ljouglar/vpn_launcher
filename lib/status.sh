@@ -80,8 +80,16 @@ check_status() {
 }
 
 list_vpns() {
-    echo -e "${BLUE}VPNs disponibles:${NC}"
     local count=$(vpn_count)
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}Aucun VPN configuré${NC}"
+        echo ""
+        echo -e "${BLUE}💡 Utilisez 'vpn configure' pour créer votre premier VPN${NC}"
+        return 0
+    fi
+    
+    echo -e "${BLUE}VPNs disponibles:${NC}"
     for i in $(seq 1 "$count"); do
         local vpn_id=$(vpn_id_at "$i")
         local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")

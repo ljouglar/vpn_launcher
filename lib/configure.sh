@@ -176,9 +176,19 @@ EOF
         echo "  • $config_path (chmod 600)"
     fi
     
+    # Recharger la configuration pour mettre à jour VPN_IDS
+    load_config
+    
+    # Trouver l'index du VPN qu'on vient de créer
+    local vpn_index=$(vpn_index_of "$vpn_id")
+    
     echo ""
     echo -e "${BLUE}Vous pouvez maintenant vous connecter avec :${NC}"
-    echo "  vpn connect $(vpn_count)"
+    if [ -n "$vpn_index" ]; then
+        echo "  vpn connect $vpn_index"
+    else
+        echo "  vpn connect"
+    fi
     echo ""
     
     return 0

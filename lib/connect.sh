@@ -4,6 +4,17 @@
 connect() {
     local count=$(vpn_count)
 
+    # Vérifier s'il y a des VPN configurés
+    if [ "$count" -eq 0 ]; then
+        echo ""
+        log "⚠️  Aucun VPN configuré" "$YELLOW"
+        echo ""
+        echo -e "${BLUE}Pour créer votre premier VPN, utilisez :${NC}"
+        echo "  vpn configure"
+        echo ""
+        return 1
+    fi
+
     # Choisir le VPN
     if [ -z "$1" ]; then
         echo ""

@@ -9,10 +9,32 @@ declare -A VPN_PROP
 
 # Charger la configuration INI
 load_config() {
+    # Créer le fichier de configuration s'il n'existe pas
     if [ ! -f "$VPN_CONF" ]; then
-        echo -e "${RED}❌ Fichier de configuration introuvable: $VPN_CONF${NC}" >&2
-        exit 1
+        mkdir -p "$(dirname "$VPN_CONF")"
+        cat > "$VPN_CONF" << 'EOF'
+# Configuration VPN Manager
+# Format: [id_vpn]
+# name = Nom affiché
+# auth = password|2fa|saml
+# config = fichier.conf (pour password/2fa)
+# saml_host = host:port (pour saml)
+# saml_cert = certificat (optionnel pour saml)
+
+# Exemple:
+# [mon-vpn]
+# name = Mon VPN Corporate
+# auth = password
+# config = mon-vpn.conf
+
+EOF
+        echo -e "${YELLOW}📝 Fichier de configuration créé: $VPN_CONF${NC}" >&2
+        echo -e "${BLUE}💡 Utilisez 'vpn configure' pour ajouter votre premier VPN${NC}" >&2
     fi
+
+    # Réinitialiser les tableaux
+    VPN_IDS=()
+    declare -g -A VPN_PROP
 
     local current_section=""
     while IFS= read -r line || [ -n "$line" ]; do
@@ -36,10 +58,8 @@ load_config() {
         fi
     done < "$VPN_CONF"
 
-    if [ ${#VPN_IDS[@]} -eq 0 ]; then
-        echo -e "${RED}❌ Aucun VPN défini dans $VPN_CONF${NC}" >&2
-        exit 1
-    fi
+    # Permettre un fichier vide (pour le configurateur)
+    # Pas d'exit si aucun VPN n'est défini
 }
 
 # Accéder à une propriété d'un VPN (avec valeur par défaut optionnelle)
