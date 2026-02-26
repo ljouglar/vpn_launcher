@@ -11,9 +11,20 @@ Gestionnaire VPN multi-connexions pour Linux avec support FortiVPN. Interface in
 - **Sécurisé** : Mots de passe protégés (chmod 600)
 - **Nettoyage automatique** : Pas d'interfaces fantômes
 
-## 📋 Prérequis
+## � Compatibilité
 
-Installer `openfortivpn` :
+**Systèmes supportés** : Linux (Ubuntu, Debian, Fedora, Arch, etc.)
+
+**Version openfortivpn requise** :
+- ≥ 1.17.0 : Minimum pour les modes Password et 2FA
+- ≥ 1.20.0 : **Recommandé** pour le support SAML/SSO
+- Version testée : **1.24.1** ✅
+
+⚠️ **Important** : Les versions des dépôts officiels sont souvent anciennes. Pour SAML/SSO, la compilation depuis les sources est recommandée.
+
+## �📋 Prérequis
+
+### Option 1 : Installation via gestionnaire de paquets (Simple)
 
 **Ubuntu/Debian :**
 ```bash
@@ -30,7 +41,62 @@ sudo dnf install openfortivpn
 sudo pacman -S openfortivpn
 ```
 
-## 🚀 Installation
+⚠️ **Attention** : Les versions des dépôts peuvent être anciennes et ne pas supporter SAML/SSO.
+
+### Option 2 : Compilation depuis les sources (Recommandé)
+
+Pour obtenir la dernière version avec support SAML/SSO (≥ 1.20.0) :
+
+#### 1. Installer les dépendances de compilation
+
+**Ubuntu/Debian :**
+```bash
+sudo apt update
+sudo apt install -y build-essential automake autoconf libssl-dev pkg-config libppp-dev git
+```
+
+**Fedora/RHEL :**
+```bash
+sudo dnf install -y gcc make automake autoconf openssl-devel pkgconfig ppp-devel git
+```
+
+**Arch Linux :**
+```bash
+sudo pacman -S base-devel automake autoconf openssl pkg-config ppp git
+```
+
+#### 2. Télécharger les sources
+
+```bash
+cd /tmp
+git clone https://github.com/adrienverge/openfortivpn.git
+cd openfortivpn
+```
+
+Pour une version spécifique (ex: 1.24.1) :
+```bash
+git checkout v1.24.1
+```
+
+#### 3. Compiler et installer
+
+```bash
+./autogen.sh
+./configure --prefix=/usr --sysconfdir=/etc
+make
+sudo make install
+```
+
+#### 4. Vérifier l'installation
+
+```bash
+openfortivpn --version
+# Devrait afficher : 1.24.1 (ou la version installée)
+```
+
+**Note** : Cette méthode installe openfortivpn dans `/usr/bin/openfortivpn` et remplace toute version installée via le gestionnaire de paquets.
+
+## 🚀 Installation du VPN Manager
 
 ```bash
 # Cloner le dépôt
@@ -176,6 +242,33 @@ Soit :
 - Utilisez le chemin complet : `~/vpn`
 - Ajoutez `~/` au PATH (l'installeur le propose)
 - Relancez un nouveau terminal après avoir sourcé `.bashrc`
+
+### L'authentification SAML/SSO ne fonctionne pas
+
+**Symptôme** : L'option `--saml-login` n'est pas reconnue
+
+**Cause** : Votre version d'openfortivpn est trop ancienne (< 1.20.0)
+
+**Solution** : Compiler openfortivpn depuis les sources (voir section "Prérequis - Option 2")
+
+```bash
+# Vérifier votre version actuelle
+openfortivpn --version
+
+# Si < 1.20.0, suivez les étapes de compilation
+```
+
+### Processus VPN "fantômes" détectés
+
+Le script détecte et affiche les processus VPN non trackés. Pour nettoyer :
+
+```bash
+# Déconnecter un processus par son PID
+~/vpn disconnect <PID>
+
+# Déconnecter tous les VPN
+~/vpn disconnect all
+```
 
 ### Problèmes de connexion
 
