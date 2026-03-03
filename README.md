@@ -202,7 +202,38 @@ config = mon-vpn.conf
 ~/vpn
 ```
 
-## 💡 Exemples d'utilisation
+## �️ Tray Icon (Ubuntu)
+
+Un indicateur dans la barre système permet de piloter vos VPN sans terminal :
+
+- **Badge dynamique** : une icône bouclier affiche le nombre de VPN connectés
+- **Menu déroulant** : cliquez pour voir l'état de chaque VPN (● connecté / ○ déconnecté)
+- **Connect / Disconnect** : un clic pour monter ou descendre un VPN
+- **Notifications** : alertes à la connexion et déconnexion
+- **Autostart** : se lance automatiquement à l'ouverture de session
+
+### Installation
+
+```bash
+# Depuis le dépôt cloné
+./tray/install_tray.sh
+```
+
+Ou lors de l'installation principale (`./install.sh`), l'assistant propose d'installer le tray.
+
+### Dépendances
+
+```bash
+sudo apt install gir1.2-appindicator3-0.1 python3-gi python3-gi-cairo
+```
+
+### Lancement manuel
+
+```bash
+python3 ~/.vpn/tray/vpn_tray.py &
+```
+
+## �💡 Exemples d'utilisation
 
 ```bash
 # Menu interactif

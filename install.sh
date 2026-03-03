@@ -214,6 +214,35 @@ offer_configurator() {
     fi
 }
 
+# === Installation optionnelle du tray icon ===
+offer_tray_install() {
+    local tray_script="$INSTALL_DIR/tray/install_tray.sh"
+    
+    if [ ! -f "$tray_script" ]; then
+        return
+    fi
+    
+    echo ""
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${BLUE}   🖥️  Tray Icon (optionnel)                                 ${NC}"
+    echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "Un indicateur dans la barre système permet de :"
+    echo "  • Voir combien de VPN sont connectés (badge sur l'icône)"
+    echo "  • Monter/descendre chaque VPN en un clic"
+    echo "  • Recevoir des notifications de connexion/déconnexion"
+    echo ""
+    read -p "Installer le tray icon ? (o/N) " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Oo]$ ]]; then
+        bash "$tray_script"
+    else
+        echo ""
+        log_info "Vous pourrez l'installer plus tard avec : ./tray/install_tray.sh"
+    fi
+}
+
 # === Affichage des commandes utiles ===
 show_usage() {
     echo ""
@@ -238,6 +267,7 @@ main() {
     configure_path
     show_summary
     offer_configurator
+    offer_tray_install
     show_usage
 }
 
