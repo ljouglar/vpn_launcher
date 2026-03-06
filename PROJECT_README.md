@@ -9,13 +9,31 @@ vpn_launcher/
 ├── vpn                    → Script principal du gestionnaire VPN (bash)
 ├── install.sh             → Script d'installation pour les utilisateurs
 │
+├── lib/                   → Bibliothèque de modules bash
+│   ├── core.sh            → Constantes, chemins, couleurs, timeouts
+│   ├── config.sh          → Parseur INI et accès à vpns.conf
+│   ├── connect.sh         → Logique de connexion (VPN, SAML, tunnel SSH)
+│   ├── disconnect.sh      → Déconnexion, cascade de dépendances, nettoyage
+│   ├── session.sh         → Tracking de session (PID, état connecté/déconnecté)
+│   ├── status.sh          → Statut, détection VPN non trackés
+│   ├── configure.sh       → Assistant interactif de création VPN/tunnel
+│   └── ui.sh              → Menu interactif et aide
+│
+├── tray/                  → Indicateur système (barre des tâches)
+│   ├── vpn_tray.py        → Interface GTK AppIndicator3
+│   ├── vpn_backend.py     → Backend Python (parsing config, sessions)
+│   ├── install_tray.sh    → Script d'installation du tray
+│   └── vpn_tray_launch.sh → Script de lancement du tray
+│
+├── templates/             → Templates de fichiers de configuration
+│   ├── vpns.conf.template → Template vpns.conf avec exemples
+│   ├── README.md.template → Template du README utilisateur
+│   └── example.conf.template → Template de config openfortivpn
+│
 ├── README.md              → Documentation utilisateur principale
 ├── CHANGELOG.md           → Historique des versions
 ├── LICENSE                → Licence MIT
 ├── VERSION                → Numéro de version actuel
-│
-├── .git/                  → Dépôt Git
-├── .gitignore             → Fichiers exclus de Git
 └── PROJECT_README.md      → Ce fichier (documentation développeur)
 ```
 
@@ -52,13 +70,25 @@ chmod +x vpn
 
 ### Modifier le script principal
 
-Le fichier `vpn` est un script bash standalone qui contient toute la logique. Structure :
+Le fichier `vpn` source les modules de `lib/`. Architecture modulaire :
 
-- **Variables globales** : Chemins, couleurs, constantes
-- **Fonctions utilitaires** : Logging, affichage, parsing config
-- **Fonctions métier** : Connexion, déconnexion, status, nettoyage
-- **Menu interactif** : Interface TUI
-- **Point d'entrée** : Parsing des arguments CLI
+- **lib/core.sh** : Variables globales, chemins, couleurs, timeouts par type
+- **lib/config.sh** : Parseur INI pur bash, accès `vpn_get(id, key)`
+- **lib/connect.sh** : Connexion (password, 2fa, saml, ssh_tunnel) + gestion des dépendances
+- **lib/disconnect.sh** : Déconnexion, cascade de dépendances, kill intelligent (sudo vs user)
+- **lib/session.sh** : Tracking PID, état connecté/déconnecté, affichage
+- **lib/status.sh** : Statut, détection VPN non trackés, icônes par type
+- **lib/configure.sh** : Assistant interactif (4 types + dépendances)
+- **lib/ui.sh** : Menu TUI et aide complète
+
+#### Types de connexion
+
+| Type | Auth | Processus | Kill |
+|------|------|-----------|------|
+| password | openfortivpn | sudo | sudo kill |
+| 2fa | openfortivpn + OTP | sudo | sudo kill |
+| saml | openfortivpn + navigateur | sudo | sudo kill |
+| ssh_tunnel | ssh -L (port forwarding) | user | kill (sans sudo) |
 
 ### Tester vos modifications
 
@@ -195,8 +225,10 @@ tail -f ~/.vpn/logs/vpn.log
 1. **Installation fraîche** : Sur un système sans config existante
 2. **Mise à jour** : Réinstaller sur un système avec config existante
 3. **Multi-VPN** : Connecter 2+ VPNs simultanément
-4. **Authentification** : Tester les 3 modes (password, 2FA, SAML)
-5. **Nettoyage** : Vérifier qu'aucune interface fantôme ne reste après déconnexion
+4. **Authentification** : Tester les 4 modes (password, 2FA, SAML, ssh_tunnel)
+5. **Tunnel SSH** : Connecter un tunnel avec dépendance
+6. **Dépendances** : Vérifier auto-connect et cascade disconnect
+7. **Nettoyage** : Vérifier qu'aucune interface fantôme ne reste après déconnexion
 
 ## 🐛 Debugging
 
@@ -261,23 +293,27 @@ votre_user ALL=(ALL) NOPASSWD: /usr/bin/openfortivpn
        ▼
 ┌─────────────────────────────────────────────────┐
 │  ~/.vpn/                                        │
-│  ├── vpns.conf       → Déclaration des VPNs     │
-│  ├── configs/        → Configs openfortivpn     │
-│  │   └── *.conf     → (chmod 600, avec mots de │
-│  │                     passe intégrés)          │
-│  └── logs/           → Logs des connexions      │
+│  ├── vpns.conf       → Déclaration des VPNs      │
+│  ├── configs/        → Configs openfortivpn      │
+│  │   └── *.conf      → (chmod 600, avec mots de  │
+│  │                      passe intégrés)           │
+│  ├── sessions/       → Fichiers PID actifs       │
+│  └── logs/           → Logs des connexions       │
 └──────┬──────────────────────────────────────────┘
        │
-       ▼
-┌──────────────────────┐
-│   openfortivpn       │  Client VPN FortiGate
-│   (processus sudo)   │
-└──────┬───────────────┘
-       │
-       ▼
-┌──────────────────────┐
-│  ppp0, ppp1, ...     │  Interfaces réseau VPN
-└──────────────────────┘
+       ├───────────────────────┐
+       │                       │
+       ▼                       ▼
+┌──────────────────────┐  ┌──────────────────────┐
+│   openfortivpn       │  │   ssh -L (tunnel)     │
+│   (processus sudo)   │  │   (processus user)    │
+└──────┬───────────────┘  └──────┬───────────────┘
+       │                       │
+       ▼                       ▼
+┌──────────────────────┐  ┌──────────────────────┐
+│  ppp0, ppp1, ...     │  │  localhost:PORT →     │
+│  (interfaces VPN)    │  │  host:PORT (forward)  │
+└──────────────────────┘  └──────────────────────┘
 ```
 
 ## 📝 Licence

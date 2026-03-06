@@ -14,7 +14,7 @@ Pour chaque VPN, vous avez besoin de :
 - **Nom d'utilisateur**
 - **Certificat SSL** (fingerprint SHA256)
 - **Mot de passe**
-- **Mode d'authentification** (password, 2fa ou saml)
+- **Mode d'authentification** (password, 2fa, saml ou ssh_tunnel)
 
 ### 2. Récupérer le certificat SSL
 
@@ -75,6 +75,23 @@ saml_host = vpn.example.com:444
 saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
 ```
 
+**Pour un tunnel SSH (port forwarding) :**
+```ini
+[tunnel-db]
+name = Tunnel BDD Production
+auth = ssh_tunnel
+ssh_key = /home/user/.ssh/id_rsa
+ssh_user = root
+ssh_host = 10.244.18.22
+local_port = 33070
+remote_host = 91.216.43.88
+remote_port = 3306
+depends_on = mon-vpn
+```
+
+> **Note** : `depends_on` est optionnel et fonctionne pour tous les types.
+> Si la dépendance n'est pas connectée, le script propose de la connecter automatiquement.
+
 ## 🚀 Utilisation
 
 ### Lancer le menu interactif
@@ -129,7 +146,8 @@ tail -f ~/.vpn/logs/mon-vpn.log
 
 ✅ Multi-VPN : connectez-vous à plusieurs VPNs simultanément
 ✅ 1 seule interface par VPN (pas d'interfaces fantômes)
-✅ Support password, 2FA et SAML
+✅ Support password, 2FA, SAML et tunnel SSH
+✅ Système de dépendances entre connexions
 ✅ Nettoyage automatique à la déconnexion
 ✅ Logs détaillés pour le dépannage
 ✅ Gestion de mots de passe sécurisée

@@ -8,10 +8,27 @@ et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 ## [Unreleased]
 
 ### Ajouté
+- **Tunnels SSH (port forwarding)**
+  - Nouveau type de connexion `ssh_tunnel` pour le port forwarding via un proxy de rebond
+  - Commande SSH avec keepalive, timeout configurable et `ExitOnForwardFailure`
+  - Détection automatique du PID et tracking de session
+  - Vérification du port local disponible avant connexion
+  - Affichage dédié avec icône 🔗 dans le statut et le menu tray
+- **Système de dépendances entre connexions**
+  - Nouvelle propriété `depends_on` dans la configuration (optionnelle)
+  - Vérification automatique à la connexion : propose de connecter la dépendance si absente
+  - Cascade à la déconnexion : propose de déconnecter les connexions dépendantes
+  - Déconnexion triée (disconnect all) : les dépendants sont déconnectés avant les bases
+  - Affichage des dépendances dans `vpn list` et le menu tray (← nom_dep)
+- **Kill intelligent des processus**
+  - Détection automatique du propriétaire du processus (user vs root)
+  - `sudo kill` pour les VPN openfortivpn, `kill` simple pour les tunnels SSH
+  - Helpers `_kill_signal()` et `_kill_children()` pour factoriser la logique
 - **Configurateur interactif de VPN**
   - Nouvelle commande `vpn configure` pour créer des VPNs facilement
   - Assistant pas à pas qui guide l'utilisateur
-  - Support des 3 types d'authentification (password, 2fa, saml)
+  - Support des 4 types d'authentification (password, 2fa, saml, ssh_tunnel)
+  - Étape de sélection de dépendance pour tous les types
   - Création automatique des fichiers de configuration
   - Validation et protection automatique (chmod 600)
   - L'installateur propose maintenant de lancer le configurateur si aucun VPN n'est configuré

@@ -5,7 +5,9 @@ Gestionnaire VPN multi-connexions pour Linux avec support FortiVPN. Interface in
 ## ✨ Fonctionnalités
 
 - **Multi-VPN** : Gérez plusieurs connexions VPN simultanées
-- **3 modes d'authentification** : Password, 2FA (FortiToken), SAML/SSO
+- **4 modes de connexion** : Password, 2FA (FortiToken), SAML/SSO, Tunnel SSH
+- **Tunnels SSH** : Port forwarding via un proxy de rebond (ex: accès BDD distante)
+- **Dépendances** : Un tunnel ou VPN peut dépendre d'une autre connexion (auto-connect/cascade disconnect)
 - **Interface interactive** : Menu simple et intuitif
 - **Logs détaillés** : Pour le dépannage et le monitoring
 - **Sécurisé** : Mots de passe protégés (chmod 600)
@@ -146,7 +148,8 @@ La façon la plus simple de configurer un VPN est d'utiliser l'assistant intégr
 L'assistant vous guidera pas à pas pour :
 - Choisir un identifiant pour votre VPN
 - Définir le nom affiché
-- Sélectionner le type d'authentification (password, 2fa, ou saml)
+- Sélectionner le type de connexion (password, 2fa, saml, ou ssh_tunnel)
+- Configurer une dépendance optionnelle vers une autre connexion
 - Configurer les paramètres nécessaires
 - Créer automatiquement tous les fichiers requis
 
@@ -195,6 +198,22 @@ name = Mon VPN Corporate
 auth = password
 config = mon-vpn.conf
 ```
+
+**Tunnel SSH (port forwarding) :**
+```ini
+[tunnel-db]
+name = Tunnel BDD Production
+auth = ssh_tunnel
+ssh_key = /home/user/.ssh/id_rsa
+ssh_user = root
+ssh_host = 10.244.18.22
+local_port = 33070
+remote_host = 91.216.43.88
+remote_port = 3306
+depends_on = mon-vpn
+```
+
+> **Note** : `depends_on` est optionnel et fonctionne pour tous les types. Lorsqu'une dépendance est configurée, la connexion automatique est proposée si elle n'est pas active, et la déconnexion en cascade est gérée.
 
 ### 4. Tester
 
@@ -329,5 +348,5 @@ Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue ou un
 
 ---
 
-**Version** : 1.0  
-**Date** : Février 2026
+**Version** : 1.1  
+**Date** : Mars 2026
