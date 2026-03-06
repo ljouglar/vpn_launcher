@@ -124,17 +124,29 @@ configure_vpn() {
             return 1
         fi
         
+        # Créer le fichier de configuration du tunnel
+        local config_file="${vpn_id}.conf"
+        local config_path="$CONFIG_DIR/$config_file"
+        
+        cat > "$config_path" << EOF
+# Configuration Tunnel SSH: $vpn_name
+ssh_key = $ssh_key
+ssh_user = $ssh_user
+ssh_host = $ssh_host
+local_port = $local_port
+remote_host = $remote_host
+remote_port = $remote_port
+EOF
+        
+        # Protéger le fichier (peut contenir des infos sensibles)
+        chmod 600 "$config_path"
+        
         # Créer l'entrée dans vpns.conf
         echo "" >> "$VPN_CONF"
         echo "[$vpn_id]" >> "$VPN_CONF"
         echo "name = $vpn_name" >> "$VPN_CONF"
         echo "auth = ssh_tunnel" >> "$VPN_CONF"
-        echo "ssh_key = $ssh_key" >> "$VPN_CONF"
-        echo "ssh_user = $ssh_user" >> "$VPN_CONF"
-        echo "ssh_host = $ssh_host" >> "$VPN_CONF"
-        echo "local_port = $local_port" >> "$VPN_CONF"
-        echo "remote_host = $remote_host" >> "$VPN_CONF"
-        echo "remote_port = $remote_port" >> "$VPN_CONF"
+        echo "config = $config_file" >> "$VPN_CONF"
         if [ -n "$depends_on" ]; then
             echo "depends_on = $depends_on" >> "$VPN_CONF"
         fi
@@ -142,7 +154,9 @@ configure_vpn() {
         echo ""
         log "✅ Tunnel SSH '$vpn_name' créé avec succès !" "$GREEN"
         echo ""
-        echo "Configuration ajoutée dans $VPN_CONF"
+        echo "Configuration créée :"
+        echo "  • $VPN_CONF (entrée ajoutée)"
+        echo "  • $config_path (chmod 600)"
         echo ""
         echo -e "${BLUE}Résumé du tunnel:${NC}"
         echo "  ssh -i $ssh_key -L $local_port:$remote_host:$remote_port -N $ssh_user@$ssh_host"

@@ -76,17 +76,24 @@ saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
 ```
 
 **Pour un tunnel SSH (port forwarding) :**
+
+Dans `~/.vpn/vpns.conf` :
 ```ini
 [tunnel-db]
 name = Tunnel BDD Production
 auth = ssh_tunnel
+config = tunnel-db.conf
+depends_on = mon-vpn
+```
+
+Dans `~/.vpn/configs/tunnel-db.conf` :
+```properties
 ssh_key = /home/user/.ssh/id_rsa
 ssh_user = root
 ssh_host = 10.244.18.22
 local_port = 33070
 remote_host = 91.216.43.88
 remote_port = 3306
-depends_on = mon-vpn
 ```
 
 > **Note** : `depends_on` est optionnel et fonctionne pour tous les types.

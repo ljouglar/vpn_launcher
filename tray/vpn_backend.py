@@ -17,6 +17,7 @@ from typing import List, Optional, Tuple
 
 VPN_DIR = Path.home() / ".vpn"
 VPN_CONF = VPN_DIR / "vpns.conf"
+CONFIG_DIR = VPN_DIR / "configs"
 SESSION_DIR = VPN_DIR / "sessions"
 LOG_DIR = VPN_DIR / "logs"
 
@@ -59,6 +60,24 @@ def find_vpn_script() -> Optional[str]:
 
 
 # ── Configuration parser ─────────────────────────────────────
+
+
+def _parse_key_value_file(path: Path) -> dict:
+    """Parse a key = value config file (comments and blanks ignored)."""
+    props = {}
+    try:
+        with open(path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                kv = re.match(r"^([a-zA-Z0-9_]+)\s*=\s*(.+)$", line)
+                if kv:
+                    props[kv.group(1)] = kv.group(2).strip()
+    except OSError:
+        pass
+    return props
+
 
 def parse_config() -> List[VpnEntry]:
     """Parse ~/.vpn/vpns.conf (INI format) and return VPN entries.
@@ -108,12 +127,19 @@ def parse_config() -> List[VpnEntry]:
             index=idx,
             depends_on=section_props.get("depends_on"),
         )
-        # Parse SSH tunnel fields
+        # Parse SSH tunnel fields (from config file or inline)
         if entry.auth == "ssh_tunnel":
+            tunnel_props = dict(section_props)
+            # If a config file is referenced, parse it and merge
+            config_file = section_props.get("config")
+            if config_file:
+                config_path = CONFIG_DIR / config_file
+                if config_path.exists():
+                    tunnel_props.update(_parse_key_value_file(config_path))
             try:
-                entry.local_port = int(section_props.get("local_port", 0))
-                entry.remote_host = section_props.get("remote_host")
-                entry.remote_port = int(section_props.get("remote_port", 0))
+                entry.local_port = int(tunnel_props.get("local_port", 0))
+                entry.remote_host = tunnel_props.get("remote_host")
+                entry.remote_port = int(tunnel_props.get("remote_port", 0))
             except (ValueError, TypeError):
                 pass
         entries.append(entry)

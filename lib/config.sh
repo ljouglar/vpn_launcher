@@ -17,18 +17,13 @@ load_config() {
 # Format: [id_vpn]
 # name = Nom affiché
 # auth = password|2fa|saml|ssh_tunnel
-# config = fichier.conf (pour password/2fa)
+# config = fichier.conf (pour password/2fa/ssh_tunnel)
 # saml_host = host:port (pour saml)
 # saml_cert = certificat (optionnel pour saml)
 # depends_on = id_vpn (optionnel, dépendance)
 #
-# Pour tunnel SSH :
-# ssh_key = /chemin/vers/cle
-# ssh_user = utilisateur
-# ssh_host = hote_rebond
-# local_port = port_local
-# remote_host = hote_distant
-# remote_port = port_distant
+# Pour tunnel SSH, les paramètres sont dans le fichier .conf :
+# ssh_key, ssh_user, ssh_host, local_port, remote_host, remote_port
 
 # Exemple:
 # [mon-vpn]
@@ -66,6 +61,27 @@ EOF
             VPN_PROP["${current_section}.${key}"]="$value"
         fi
     done < "$VPN_CONF"
+
+    # Pour les tunnels SSH avec fichier de config, charger les paramètres du fichier
+    # Cela permet à vpn_get() de fonctionner de manière transparente
+    for _cfg_id in "${VPN_IDS[@]}"; do
+        local _cfg_auth="${VPN_PROP["${_cfg_id}.auth"]}"
+        local _cfg_file="${VPN_PROP["${_cfg_id}.config"]}"
+        if [ "$_cfg_auth" = "ssh_tunnel" ] && [ -n "$_cfg_file" ]; then
+            local _cfg_path="$CONFIG_DIR/$_cfg_file"
+            if [ -f "$_cfg_path" ]; then
+                while IFS= read -r line || [ -n "$line" ]; do
+                    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+                    if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+                        local _k="${BASH_REMATCH[1]}"
+                        local _v="${BASH_REMATCH[2]}"
+                        _v="${_v%"${_v##*[![:space:]]}"}"
+                        VPN_PROP["${_cfg_id}.${_k}"]="$_v"
+                    fi
+                done < "$_cfg_path"
+            fi
+        fi
+    done
 
     # Permettre un fichier vide (pour le configurateur)
     # Pas d'exit si aucun VPN n'est défini

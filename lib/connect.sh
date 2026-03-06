@@ -165,6 +165,15 @@ connect() {
 
     # === Branche SSH Tunnel ===
     if [ "$auth" = "ssh_tunnel" ]; then
+        # Vérifier le fichier de config (comme password/2fa)
+        if [ -n "$config_file" ]; then
+            local config_path="$CONFIG_DIR/$config_file"
+            if [ ! -f "$config_path" ]; then
+                log "❌ Configuration du tunnel introuvable: $config_path" "$RED"
+                return 1
+            fi
+        fi
+
         local ssh_key=$(vpn_get "$vpn_id" "ssh_key")
         local ssh_user=$(vpn_get "$vpn_id" "ssh_user")
         local ssh_host=$(vpn_get "$vpn_id" "ssh_host")

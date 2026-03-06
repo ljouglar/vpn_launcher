@@ -200,17 +200,24 @@ config = mon-vpn.conf
 ```
 
 **Tunnel SSH (port forwarding) :**
+
+Dans `~/.vpn/vpns.conf` :
 ```ini
 [tunnel-db]
 name = Tunnel BDD Production
 auth = ssh_tunnel
+config = tunnel-db.conf
+depends_on = mon-vpn
+```
+
+Dans `~/.vpn/configs/tunnel-db.conf` :
+```properties
 ssh_key = /home/user/.ssh/id_rsa
 ssh_user = root
 ssh_host = 10.244.18.22
 local_port = 33070
 remote_host = 91.216.43.88
 remote_port = 3306
-depends_on = mon-vpn
 ```
 
 > **Note** : `depends_on` est optionnel et fonctionne pour tous les types. Lorsqu'une dépendance est configurée, la connexion automatique est proposée si elle n'est pas active, et la déconnexion en cascade est gérée.
