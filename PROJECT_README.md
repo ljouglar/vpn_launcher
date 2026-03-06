@@ -83,12 +83,12 @@ Le fichier `vpn` source les modules de `lib/`. Architecture modulaire :
 
 #### Types de connexion
 
-| Type | Auth | Processus | Kill |
-|------|------|-----------|------|
-| password | openfortivpn | sudo | sudo kill |
-| 2fa | openfortivpn + OTP | sudo | sudo kill |
-| saml | openfortivpn + navigateur | sudo | sudo kill |
-| ssh_tunnel | ssh -L (port forwarding) | user | kill (sans sudo) |
+| Type       | Auth                      | Processus | Kill             |
+| ---------- | ------------------------- | --------- | ---------------- |
+| password   | openfortivpn              | sudo      | sudo kill        |
+| 2fa        | openfortivpn + OTP        | sudo      | sudo kill        |
+| saml       | openfortivpn + navigateur | sudo      | sudo kill        |
+| ssh_tunnel | ssh -L (port forwarding)  | user      | kill (sans sudo) |
 
 ### Tester vos modifications
 
