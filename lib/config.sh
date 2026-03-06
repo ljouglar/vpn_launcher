@@ -16,10 +16,19 @@ load_config() {
 # Configuration VPN Manager
 # Format: [id_vpn]
 # name = Nom affiché
-# auth = password|2fa|saml
+# auth = password|2fa|saml|ssh_tunnel
 # config = fichier.conf (pour password/2fa)
 # saml_host = host:port (pour saml)
 # saml_cert = certificat (optionnel pour saml)
+# depends_on = id_vpn (optionnel, dépendance)
+#
+# Pour tunnel SSH :
+# ssh_key = /chemin/vers/cle
+# ssh_user = utilisateur
+# ssh_host = hote_rebond
+# local_port = port_local
+# remote_host = hote_distant
+# remote_port = port_distant
 
 # Exemple:
 # [mon-vpn]

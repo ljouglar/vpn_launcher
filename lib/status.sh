@@ -93,11 +93,24 @@ list_vpns() {
     for i in $(seq 1 "$count"); do
         local vpn_id=$(vpn_id_at "$i")
         local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
-        
+        local auth=$(vpn_get "$vpn_id" "auth" "password")
+        local depends_on=$(vpn_get "$vpn_id" "depends_on")
+
+        # Icône selon le type
+        local type_icon="🔒"
+        [ "$auth" = "ssh_tunnel" ] && type_icon="🔗"
+
+        # Info dépendance
+        local dep_info=""
+        if [ -n "$depends_on" ]; then
+            local dep_name=$(vpn_get "$depends_on" "name" "$depends_on")
+            dep_info=" ${YELLOW}(← $dep_name)${NC}"
+        fi
+
         if is_vpn_connected "$vpn_id"; then
-            echo -e "  $i) ${GREEN}● $display_name${NC}"
+            echo -e "  $i) ${GREEN}● $type_icon $display_name${NC}$dep_info"
         else
-            echo "  $i) $display_name"
+            echo -e "  $i) $type_icon $display_name$dep_info"
         fi
     done
 }

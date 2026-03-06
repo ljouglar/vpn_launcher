@@ -50,6 +50,36 @@ connect() {
         fi
     fi
 
+    # Vérifier les dépendances
+    local depends_on=$(vpn_get "$vpn_id" "depends_on")
+    if [ -n "$depends_on" ]; then
+        if ! is_vpn_connected "$depends_on"; then
+            local dep_name=$(vpn_get "$depends_on" "name" "$depends_on")
+            log "⚠️  $display_name dépend de $dep_name qui n'est pas connecté" "$YELLOW"
+            read -p "Connecter $dep_name d'abord ? (O/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                local dep_index=$(vpn_index_of "$depends_on")
+                if [ -n "$dep_index" ]; then
+                    connect "$dep_index"
+                    if ! is_vpn_connected "$depends_on"; then
+                        log "❌ Impossible de connecter la dépendance $dep_name" "$RED"
+                        return 1
+                    fi
+                else
+                    log "❌ Dépendance '$depends_on' non trouvée dans la configuration" "$RED"
+                    return 1
+                fi
+            else
+                log "❌ Connexion annulée (dépendance non satisfaite)" "$RED"
+                return 1
+            fi
+        else
+            local dep_name=$(vpn_get "$depends_on" "name" "$depends_on")
+            log "✅ Dépendance satisfaite: $dep_name est connecté" "$GREEN"
+        fi
+    fi
+
     # Mémoriser les interfaces ppp existantes avant connexion
     local ppp_before=$(ip -o link show type ppp 2>/dev/null | awk -F': ' '{print $2}' | sort)
     local vpn_log="$LOG_DIR/${vpn_id}.log"
@@ -131,6 +161,85 @@ connect() {
         echo -e "${YELLOW}En attente de l'authentification dans le navigateur...${NC}"
         _wait_for_connection "$vpn_id" "$vpn_pid" "$ppp_before" "$vpn_log" "$timeout"
         return $?
+    fi
+
+    # === Branche SSH Tunnel ===
+    if [ "$auth" = "ssh_tunnel" ]; then
+        local ssh_key=$(vpn_get "$vpn_id" "ssh_key")
+        local ssh_user=$(vpn_get "$vpn_id" "ssh_user")
+        local ssh_host=$(vpn_get "$vpn_id" "ssh_host")
+        local local_port=$(vpn_get "$vpn_id" "local_port")
+        local remote_host=$(vpn_get "$vpn_id" "remote_host")
+        local remote_port=$(vpn_get "$vpn_id" "remote_port")
+
+        # Valider les champs requis
+        local missing_fields=""
+        [ -z "$ssh_key" ] && missing_fields="${missing_fields} ssh_key"
+        [ -z "$ssh_user" ] && missing_fields="${missing_fields} ssh_user"
+        [ -z "$ssh_host" ] && missing_fields="${missing_fields} ssh_host"
+        [ -z "$local_port" ] && missing_fields="${missing_fields} local_port"
+        [ -z "$remote_host" ] && missing_fields="${missing_fields} remote_host"
+        [ -z "$remote_port" ] && missing_fields="${missing_fields} remote_port"
+
+        if [ -n "$missing_fields" ]; then
+            log "❌ Champs manquants pour le tunnel SSH $vpn_id:$missing_fields" "$RED"
+            return 1
+        fi
+
+        # Vérifier que la clé SSH existe
+        if [ ! -f "$ssh_key" ]; then
+            log "❌ Clé SSH introuvable: $ssh_key" "$RED"
+            return 1
+        fi
+
+        # Vérifier que le port local n'est pas déjà utilisé
+        if ss -tlnp 2>/dev/null | grep -q ":${local_port} "; then
+            log "⚠️  Le port local $local_port est déjà utilisé" "$YELLOW"
+            return 1
+        fi
+
+        log "🔗 Tunnel SSH: localhost:$local_port → $remote_host:$remote_port via $ssh_user@$ssh_host" "$BLUE"
+
+        # Lancer le tunnel SSH (-f: passe en background après authentification)
+        ssh -i "$ssh_key" \
+            -L "${local_port}:${remote_host}:${remote_port}" \
+            -N -f \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            -o ConnectTimeout="$timeout" \
+            "$ssh_user@$ssh_host" >> "$vpn_log" 2>&1
+
+        local ssh_exit=$?
+        if [ $ssh_exit -ne 0 ]; then
+            log "❌ Échec du tunnel SSH (code: $ssh_exit)" "$RED"
+            log "📝 Vérifiez les logs: cat $vpn_log" "$YELLOW"
+            return 1
+        fi
+
+        # Trouver le PID du processus SSH
+        sleep 1
+        local tunnel_pid=$(pgrep -f "ssh.*-L ${local_port}:${remote_host}:${remote_port}.*${ssh_user}@${ssh_host}" | head -1)
+
+        if [ -z "$tunnel_pid" ]; then
+            log "❌ Impossible de trouver le processus du tunnel SSH" "$RED"
+            return 1
+        fi
+
+        # Sauvegarder la session
+        echo "$tunnel_pid" > "$SESSION_DIR/.session_${vpn_id}"
+
+        echo ""
+        log "✅ Tunnel SSH ouvert: localhost:$local_port → $remote_host:$remote_port" "$GREEN"
+        echo ""
+        echo -e "${BLUE}Détails du tunnel:${NC}"
+        echo "  Port local  : $local_port"
+        echo "  Destination : $remote_host:$remote_port"
+        echo "  Proxy SSH   : $ssh_user@$ssh_host"
+        echo "  PID         : $tunnel_pid"
+        echo ""
+        log "📝 Logs: tail -f $vpn_log" "$BLUE"
+        return 0
     fi
 
     # === Branches password / 2fa (nécessitent un fichier de config) ===

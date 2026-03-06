@@ -25,14 +25,19 @@ LOG_DIR = VPN_DIR / "logs"
 
 @dataclass
 class VpnEntry:
-    """Represents a VPN from the configuration file."""
+    """Represents a VPN or SSH tunnel from the configuration file."""
 
     id: str
     name: str
-    auth: str  # password | 2fa | saml
+    auth: str  # password | 2fa | saml | ssh_tunnel
     index: int  # 1-based position in the config file
     connected: bool = False
     pid: Optional[int] = None
+    depends_on: Optional[str] = None
+    # SSH tunnel specific fields
+    local_port: Optional[int] = None
+    remote_host: Optional[str] = None
+    remote_port: Optional[int] = None
 
 
 # ── Script discovery ─────────────────────────────────────────
@@ -96,14 +101,22 @@ def parse_config() -> List[VpnEntry]:
         sections.append((current_section, dict(props)))
 
     for idx, (section_id, section_props) in enumerate(sections, 1):
-        entries.append(
-            VpnEntry(
-                id=section_id,
-                name=section_props.get("name", section_id),
-                auth=section_props.get("auth", "password"),
-                index=idx,
-            )
+        entry = VpnEntry(
+            id=section_id,
+            name=section_props.get("name", section_id),
+            auth=section_props.get("auth", "password"),
+            index=idx,
+            depends_on=section_props.get("depends_on"),
         )
+        # Parse SSH tunnel fields
+        if entry.auth == "ssh_tunnel":
+            try:
+                entry.local_port = int(section_props.get("local_port", 0))
+                entry.remote_host = section_props.get("remote_host")
+                entry.remote_port = int(section_props.get("remote_port", 0))
+            except (ValueError, TypeError):
+                pass
+        entries.append(entry)
 
     return entries
 

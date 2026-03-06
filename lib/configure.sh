@@ -38,23 +38,120 @@ configure_vpn() {
     # 3. Type d'authentification
     echo ""
     echo -e "${YELLOW}Type d'authentification${NC}"
-    echo "  1) password - Mot de passe simple"
-    echo "  2) 2fa      - Authentification 2FA (FortiToken)"
-    echo "  3) saml     - Authentification SSO/SAML"
-    read -p "Votre choix [1-3] : " auth_choice
+    echo "  1) password    - Mot de passe simple"
+    echo "  2) 2fa         - Authentification 2FA (FortiToken)"
+    echo "  3) saml        - Authentification SSO/SAML"
+    echo "  4) ssh_tunnel  - Tunnel SSH (port forwarding)"
+    read -p "Votre choix [1-4] : " auth_choice
     
     case $auth_choice in
         1) auth_type="password" ;;
         2) auth_type="2fa" ;;
         3) auth_type="saml" ;;
+        4) auth_type="ssh_tunnel" ;;
         *)
             log "❌ Choix invalide" "$RED"
             return 1
             ;;
     esac
     
+    # 3b. Dépendance optionnelle
+    local depends_on=""
+    local existing_count=$(vpn_count)
+    if [ "$existing_count" -gt 0 ]; then
+        echo ""
+        echo -e "${YELLOW}Dépendance (optionnel)${NC}"
+        echo "Ce VPN/tunnel dépend-il d'une autre connexion ?"
+        echo "  0) Aucune dépendance"
+        for i in $(seq 1 "$existing_count"); do
+            local dep_id=$(vpn_id_at "$i")
+            local dep_display=$(vpn_get "$dep_id" "name" "$dep_id")
+            echo "  $i) $dep_display"
+        done
+        read -p "Votre choix [0-$existing_count] : " dep_choice
+        
+        if [[ "$dep_choice" =~ ^[0-9]+$ ]] && [ "$dep_choice" -ge 1 ] && [ "$dep_choice" -le "$existing_count" ]; then
+            depends_on=$(vpn_id_at "$dep_choice")
+        fi
+    fi
+    
     # 4. Configuration selon le type
-    if [ "$auth_type" = "saml" ]; then
+    if [ "$auth_type" = "ssh_tunnel" ]; then
+        # === Mode SSH Tunnel ===
+        echo ""
+        echo -e "${YELLOW}Configuration du tunnel SSH${NC}"
+        echo ""
+        read -p "Clé SSH (ex: /home/$USER/.ssh/id_rsa) : " ssh_key
+        
+        if [ -z "$ssh_key" ]; then
+            ssh_key="$HOME/.ssh/id_rsa"
+            echo "  → Utilisation de la clé par défaut: $ssh_key"
+        fi
+        
+        if [ ! -f "$ssh_key" ]; then
+            log "⚠️  Attention: la clé $ssh_key n'existe pas encore" "$YELLOW"
+        fi
+        
+        read -p "Utilisateur SSH (ex: root) : " ssh_user
+        if [ -z "$ssh_user" ]; then
+            log "❌ L'utilisateur SSH est obligatoire" "$RED"
+            return 1
+        fi
+        
+        read -p "Hôte SSH / proxy de rebond (ex: 10.244.18.22) : " ssh_host
+        if [ -z "$ssh_host" ]; then
+            log "❌ L'hôte SSH est obligatoire" "$RED"
+            return 1
+        fi
+        
+        echo ""
+        echo -e "${YELLOW}Port forwarding${NC}"
+        read -p "Port local (ex: 33070) : " local_port
+        if [ -z "$local_port" ]; then
+            log "❌ Le port local est obligatoire" "$RED"
+            return 1
+        fi
+        
+        read -p "Hôte distant / destination (ex: 91.216.43.88) : " remote_host
+        if [ -z "$remote_host" ]; then
+            log "❌ L'hôte distant est obligatoire" "$RED"
+            return 1
+        fi
+        
+        read -p "Port distant (ex: 3306) : " remote_port
+        if [ -z "$remote_port" ]; then
+            log "❌ Le port distant est obligatoire" "$RED"
+            return 1
+        fi
+        
+        # Créer l'entrée dans vpns.conf
+        echo "" >> "$VPN_CONF"
+        echo "[$vpn_id]" >> "$VPN_CONF"
+        echo "name = $vpn_name" >> "$VPN_CONF"
+        echo "auth = ssh_tunnel" >> "$VPN_CONF"
+        echo "ssh_key = $ssh_key" >> "$VPN_CONF"
+        echo "ssh_user = $ssh_user" >> "$VPN_CONF"
+        echo "ssh_host = $ssh_host" >> "$VPN_CONF"
+        echo "local_port = $local_port" >> "$VPN_CONF"
+        echo "remote_host = $remote_host" >> "$VPN_CONF"
+        echo "remote_port = $remote_port" >> "$VPN_CONF"
+        if [ -n "$depends_on" ]; then
+            echo "depends_on = $depends_on" >> "$VPN_CONF"
+        fi
+        
+        echo ""
+        log "✅ Tunnel SSH '$vpn_name' créé avec succès !" "$GREEN"
+        echo ""
+        echo "Configuration ajoutée dans $VPN_CONF"
+        echo ""
+        echo -e "${BLUE}Résumé du tunnel:${NC}"
+        echo "  ssh -i $ssh_key -L $local_port:$remote_host:$remote_port -N $ssh_user@$ssh_host"
+        if [ -n "$depends_on" ]; then
+            local dep_display=$(vpn_get "$depends_on" "name" "$depends_on")
+            echo -e "  ${YELLOW}Dépendance: $dep_display${NC}"
+        fi
+        
+    elif [ "$auth_type" = "saml" ]; then
         # === Mode SAML ===
         echo ""
         echo -e "${YELLOW}Configuration SAML${NC}"
@@ -80,6 +177,9 @@ configure_vpn() {
         echo "saml_host = $saml_host" >> "$VPN_CONF"
         if [ -n "$saml_cert" ]; then
             echo "saml_cert = $saml_cert" >> "$VPN_CONF"
+        fi
+        if [ -n "$depends_on" ]; then
+            echo "depends_on = $depends_on" >> "$VPN_CONF"
         fi
         
         echo ""
@@ -167,6 +267,9 @@ EOF
         echo "name = $vpn_name" >> "$VPN_CONF"
         echo "auth = $auth_type" >> "$VPN_CONF"
         echo "config = $config_file" >> "$VPN_CONF"
+        if [ -n "$depends_on" ]; then
+            echo "depends_on = $depends_on" >> "$VPN_CONF"
+        fi
         
         echo ""
         log "✅ VPN '$vpn_name' créé avec succès !" "$GREEN"

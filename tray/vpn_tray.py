@@ -249,7 +249,15 @@ class VpnTray:
         else:
             for entry in entries:
                 bullet = "●" if entry.connected else "○"
-                label = f"  {bullet}  {entry.name}"
+                type_icon = "🔗" if entry.auth == "ssh_tunnel" else "🔒"
+                dep_info = ""
+                if entry.depends_on:
+                    dep_entry = next(
+                        (e for e in entries if e.id == entry.depends_on), None
+                    )
+                    if dep_entry:
+                        dep_info = f" (← {dep_entry.name})"
+                label = f"  {bullet} {type_icon}  {entry.name}{dep_info}"
                 item = Gtk.MenuItem(label=label)
                 item.connect("activate", self._on_toggle, entry)
                 menu.append(item)

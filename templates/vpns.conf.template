@@ -1,13 +1,26 @@
 # Configuration des VPN
-# Format INI : chaque section [id] définit un VPN
+# Format INI : chaque section [id] définit un VPN ou tunnel
 #
-# Propriétés :
+# Propriétés communes :
 #   name           = Nom affiché (obligatoire)
-#   auth           = Mode d'authentification : password | 2fa | saml (obligatoire)
-#   config         = Fichier de config openfortivpn dans ~/.vpn/configs/ (pour password et 2fa)
-#   saml_host      = Hôte:port pour authentification SAML (pour saml)
-#   saml_cert      = Certificat de confiance pour SAML (pour saml)
-#   timeout        = Timeout de connexion en secondes (défaut : 20 pour password, 30 pour 2fa, 60 pour saml)
+#   auth           = Mode : password | 2fa | saml | ssh_tunnel (obligatoire)
+#   timeout        = Timeout de connexion en secondes (défaut : 20/30/60/15)
+#   depends_on     = ID d'une autre connexion requise (optionnel)
+#
+# Propriétés VPN (password / 2fa) :
+#   config         = Fichier de config openfortivpn dans ~/.vpn/configs/
+#
+# Propriétés SAML :
+#   saml_host      = Hôte:port pour authentification SAML
+#   saml_cert      = Certificat de confiance pour SAML
+#
+# Propriétés SSH Tunnel :
+#   ssh_key        = Chemin vers la clé SSH
+#   ssh_user       = Utilisateur SSH sur le proxy de rebond
+#   ssh_host       = Hôte SSH (proxy de rebond)
+#   local_port     = Port local à écouter
+#   remote_host    = Hôte distant (destination)
+#   remote_port    = Port distant (destination)
 
 # Exemple : VPN avec authentification par mot de passe
 # [mon-vpn]
@@ -27,3 +40,15 @@
 # auth = saml
 # saml_host = vpn.example.com:444
 # saml_cert = 166fe8f33b64afc49c64f6c632b409d6f4c204ff1e90ce81d1e7da7b98e3fbf1
+
+# Exemple : Tunnel SSH (port forwarding via un rebond)
+# [tunnel-db]
+# name = Tunnel BDD Production
+# auth = ssh_tunnel
+# ssh_key = /home/user/.ssh/id_rsa
+# ssh_user = root
+# ssh_host = 10.244.18.22
+# local_port = 33070
+# remote_host = 91.216.43.88
+# remote_port = 3306
+# depends_on = mon-vpn

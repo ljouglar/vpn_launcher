@@ -1,6 +1,27 @@
 #!/bin/bash
 # lib/disconnect.sh - Logique de déconnexion VPN
 
+# Helper: envoyer un signal à un processus (avec ou sans sudo selon le propriétaire)
+_kill_signal() {
+    local pid="$1"
+    local signal="${2:--TERM}"
+    local proc_user=$(ps -p "$pid" -o user= 2>/dev/null)
+    if [ "$proc_user" = "$(whoami)" ]; then
+        kill "$signal" "$pid" 2>/dev/null
+    else
+        sudo kill "$signal" "$pid" 2>/dev/null
+    fi
+}
+
+# Helper: envoyer un signal à une liste de PIDs
+_kill_children() {
+    local signal="${1:--TERM}"
+    shift
+    for child_pid in "$@"; do
+        _kill_signal "$child_pid" "$signal"
+    done
+}
+
 disconnect_one() {
     local vpn_id="$1"
     
@@ -12,35 +33,33 @@ disconnect_one() {
             return 1
         fi
         
-        # Vérifier que c'est bien un processus openfortivpn
-        if ! ps -p "$pid" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
-            log "❌ Le PID $pid n'est pas un processus openfortivpn" "$RED"
+        # Vérifier que c'est un processus VPN ou tunnel SSH
+        local proc_name=$(ps -p "$pid" -o comm= 2>/dev/null)
+        if [[ "$proc_name" != "openfortivpn" && "$proc_name" != "ssh" ]]; then
+            log "❌ Le PID $pid n'est pas un processus VPN ou tunnel SSH ($proc_name)" "$RED"
             return 1
         fi
         
         log "🔌 Déconnexion du processus (PID: $pid)..." "$YELLOW"
         
         # Tuer les processus enfants d'abord
-        local children=$(pgrep -P "$pid" 2>/dev/null)
-        if [ -n "$children" ]; then
-            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        local children=( $(pgrep -P "$pid" 2>/dev/null) )
+        if [ ${#children[@]} -gt 0 ]; then
+            _kill_children -TERM "${children[@]}"
         fi
         
         # Envoyer SIGTERM au processus principal
-        sudo kill -TERM "$pid" 2>/dev/null
+        _kill_signal "$pid" -TERM
         sleep 3
         
         if [ -d "/proc/$pid" ]; then
             log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
-            # Tuer les enfants avec SIGKILL
-            if [ -n "$children" ]; then
-                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            if [ ${#children[@]} -gt 0 ]; then
+                _kill_children -9 "${children[@]}"
             fi
-            # Tuer le parent avec SIGKILL
-            sudo kill -9 "$pid" 2>/dev/null
+            _kill_signal "$pid" -9
             sleep 2
             
-            # Vérifier que le processus est VRAIMENT mort
             if [ -d "/proc/$pid" ]; then
                 log "❌ ERREUR: Impossible de tuer le processus $pid" "$RED"
                 log "💡 Le processus pourrait avoir des permissions spéciales" "$YELLOW"
@@ -74,34 +93,61 @@ disconnect_one() {
     
     # Sinon, c'est un ID de VPN normal
     local session_file="$SESSION_DIR/.session_${vpn_id}"
+    local display_name=$(vpn_get "$vpn_id" "name" "$vpn_id")
 
     if [ ! -f "$session_file" ]; then
-        log "❌ $vpn_id n'est pas connecté" "$RED"
+        log "❌ $display_name n'est pas connecté" "$RED"
         return 1
+    fi
+
+    # Vérifier si des connexions dépendent de celle-ci
+    local dependents=()
+    for id in "${VPN_IDS[@]}"; do
+        local dep=$(vpn_get "$id" "depends_on")
+        if [ "$dep" = "$vpn_id" ] && is_vpn_connected "$id"; then
+            dependents+=("$id")
+        fi
+    done
+
+    if [ ${#dependents[@]} -gt 0 ]; then
+        local dep_names=""
+        for dep_id in "${dependents[@]}"; do
+            dep_names="${dep_names} $(vpn_get "$dep_id" "name" "$dep_id"),"
+        done
+        dep_names="${dep_names%,}"
+        log "⚠️  Des connexions dépendent de $display_name:$dep_names" "$YELLOW"
+        read -p "Déconnecter les dépendances d'abord ? (O/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            for dep_id in "${dependents[@]}"; do
+                disconnect_one "$dep_id"
+            done
+        else
+            log "❌ Déconnexion annulée" "$RED"
+            return 1
+        fi
     fi
 
     local pid=$(cat "$session_file" 2>/dev/null)
     if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-        log "🔌 Déconnexion de $vpn_id (PID: $pid)..." "$YELLOW"
+        log "🔌 Déconnexion de $display_name (PID: $pid)..." "$YELLOW"
         
         # Tuer les processus enfants d'abord
-        local children=$(pgrep -P "$pid" 2>/dev/null)
-        if [ -n "$children" ]; then
-            echo "$children" | xargs -r sudo kill -TERM 2>/dev/null
+        local children=( $(pgrep -P "$pid" 2>/dev/null) )
+        if [ ${#children[@]} -gt 0 ]; then
+            _kill_children -TERM "${children[@]}"
         fi
         
         # Envoyer SIGTERM au processus principal
-        sudo kill -TERM "$pid" 2>/dev/null
+        _kill_signal "$pid" -TERM
         sleep 3
         
         if [ -d "/proc/$pid" ]; then
             log "Processus encore actif, envoi de SIGKILL..." "$YELLOW"
-            # Tuer les enfants avec SIGKILL
-            if [ -n "$children" ]; then
-                echo "$children" | xargs -r sudo kill -9 2>/dev/null
+            if [ ${#children[@]} -gt 0 ]; then
+                _kill_children -9 "${children[@]}"
             fi
-            # Tuer le parent avec SIGKILL
-            sudo kill -9 "$pid" 2>/dev/null
+            _kill_signal "$pid" -9
             sleep 2
             
             # Vérifier que le processus est VRAIMENT mort
@@ -128,7 +174,7 @@ disconnect_one() {
         fi
     fi
     
-    log "✅ $vpn_id déconnecté" "$GREEN"
+    log "✅ $display_name déconnecté" "$GREEN"
 }
 
 cleanup_orphans() {
@@ -159,7 +205,7 @@ cleanup_orphans() {
         
         if [ "$is_tracked" = false ]; then
             log "  Arrêt du processus orphelin (PID: $pid)..." "$YELLOW"
-            sudo kill -9 "$pid" 2>/dev/null
+            _kill_signal "$pid" -9
             sleep 0.5
             if ! [ -d "/proc/$pid" ]; then
                 cleaned=$((cleaned + 1))
@@ -217,7 +263,17 @@ disconnect() {
     if [ -n "$target" ]; then
         # Vérifier si c'est "all" pour tout déconnecter
         if [[ "$target" = "all" || "$target" = "a" ]]; then
+            # Trier : déconnecter les dépendants d'abord, puis les bases
+            local sorted_vpns=()
             for vpn_id in "${connected_vpns[@]}"; do
+                local dep=$(vpn_get "$vpn_id" "depends_on")
+                [ -n "$dep" ] && sorted_vpns+=("$vpn_id")
+            done
+            for vpn_id in "${connected_vpns[@]}"; do
+                local dep=$(vpn_get "$vpn_id" "depends_on")
+                [ -z "$dep" ] && sorted_vpns+=("$vpn_id")
+            done
+            for vpn_id in "${sorted_vpns[@]}"; do
                 disconnect_one "$vpn_id"
             done
             
@@ -232,11 +288,13 @@ disconnect() {
         
         # Si c'est un nombre, vérifier d'abord si c'est un PID valide
         if [[ "$target" =~ ^[0-9]+$ ]]; then
-            # Vérifier si c'est un PID de processus openfortivpn
-            if [ -d "/proc/$target" ] && ps -p "$target" -o comm= 2>/dev/null | grep -q "openfortivpn"; then
-                # C'est un PID valide, déconnecter directement
-                disconnect_one "$target"
-                return
+            # Vérifier si c'est un PID de processus VPN ou tunnel SSH
+            if [ -d "/proc/$target" ]; then
+                local proc_name=$(ps -p "$target" -o comm= 2>/dev/null)
+                if [[ "$proc_name" == "openfortivpn" || "$proc_name" == "ssh" ]]; then
+                    disconnect_one "$target"
+                    return
+                fi
             fi
             
             # Sinon, c'est peut-être un index de position

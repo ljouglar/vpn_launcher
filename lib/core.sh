@@ -22,6 +22,7 @@ declare -A DEFAULT_TIMEOUTS
 DEFAULT_TIMEOUTS[password]=20
 DEFAULT_TIMEOUTS[2fa]=30
 DEFAULT_TIMEOUTS[saml]=60
+DEFAULT_TIMEOUTS[ssh_tunnel]=15
 
 # ============================================================
 #  Fonctions utilitaires
