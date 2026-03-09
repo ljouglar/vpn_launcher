@@ -99,6 +99,23 @@ connect() {
             return 1
         fi
 
+        # Auto-détection du certificat si non configuré
+        if [ -z "$saml_cert" ]; then
+            local saml_host_name=$(echo "$saml_host" | cut -d':' -f1)
+            local saml_port=$(echo "$saml_host" | cut -d':' -f2)
+            saml_port="${saml_port:-443}"
+            log "🔍 Récupération automatique du certificat de $saml_host_name:$saml_port..." "$BLUE"
+            saml_cert=$(openssl s_client -connect "$saml_host_name:$saml_port" -servername "$saml_host_name" </dev/null 2>/dev/null \
+                | openssl x509 -noout -fingerprint -sha256 2>/dev/null \
+                | sed 's/.*=//;s/://g' \
+                | tr '[:upper:]' '[:lower:]')
+            if [ -n "$saml_cert" ]; then
+                log "✅ Certificat détecté: ${saml_cert:0:16}..." "$GREEN"
+            else
+                log "⚠️  Impossible de récupérer le certificat automatiquement" "$YELLOW"
+            fi
+        fi
+
         log "🔐 Ce VPN utilise l'authentification SSO (SAML)" "$YELLOW"
         echo ""
 

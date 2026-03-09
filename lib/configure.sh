@@ -177,21 +177,12 @@ EOF
             return 1
         fi
         
-        echo ""
-        echo "Certificat SSL (optionnel)"
-        echo "Pour obtenir le certificat :"
-        echo "  echo | openssl s_client -connect $saml_host 2>/dev/null | openssl x509 -fingerprint -noout -sha256"
-        read -p "Certificat SHA256 (laissez vide si inconnu) : " saml_cert
-        
         # Créer l'entrée dans vpns.conf
         echo "" >> "$VPN_CONF"
         echo "[$vpn_id]" >> "$VPN_CONF"
         echo "name = $vpn_name" >> "$VPN_CONF"
         echo "auth = saml" >> "$VPN_CONF"
         echo "saml_host = $saml_host" >> "$VPN_CONF"
-        if [ -n "$saml_cert" ]; then
-            echo "saml_cert = $saml_cert" >> "$VPN_CONF"
-        fi
         if [ -n "$depends_on" ]; then
             echo "depends_on = $depends_on" >> "$VPN_CONF"
         fi
