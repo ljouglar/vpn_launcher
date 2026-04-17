@@ -305,6 +305,48 @@ def configure() -> None:
     run_wizard()
 
 
+@app.command(name="help")
+def show_help() -> None:
+    """Afficher l'aide détaillée des commandes disponibles."""
+    table = Table(show_header=True, header_style="bold blue", box=None, padding=(0, 2))
+    table.add_column("Commande", style="cyan", no_wrap=True)
+    table.add_column("Description")
+
+    table.add_row("vpn", "Ouvre le menu interactif (par défaut)")
+    table.add_row("vpn connect", "Menu interactif de connexion")
+    table.add_row("vpn connect <id|n°>", "Connexion directe par ID ou numéro")
+    table.add_row("vpn disconnect", "Menu interactif de déconnexion")
+    table.add_row("vpn disconnect <id|n°>", "Déconnexion par ID ou numéro")
+    table.add_row("vpn disconnect <pid>", "Déconnexion par PID (processus non tracké)")
+    table.add_row("vpn disconnect all", "Déconnecter toutes les connexions actives")
+    table.add_row("vpn status", "Afficher l'état de toutes les connexions")
+    table.add_row("vpn list", "Lister les VPNs configurés")
+    table.add_row("vpn configure", "Assistant de création d'un nouveau VPN")
+    table.add_row("vpn cleanup", "Supprimer les processus et interfaces orphelins")
+    table.add_row("vpn help", "Afficher cette aide")
+
+    rprint()
+    rprint("[bold blue]Gestionnaire VPN — Commandes disponibles[/bold blue]")
+    rprint()
+    console.print(table)
+    rprint()
+    rprint("[bold]Exemples :[/bold]")
+    rprint("  [dim]# Connexion rapide au VPN n°1[/dim]")
+    rprint("  [cyan]vpn connect 1[/cyan]")
+    rprint()
+    rprint("  [dim]# Connexion par identifiant[/dim]")
+    rprint("  [cyan]vpn connect mon-vpn[/cyan]")
+    rprint()
+    rprint("  [dim]# Voir le statut[/dim]")
+    rprint("  [cyan]vpn status[/cyan]")
+    rprint()
+    rprint("  [dim]# Déconnecter tout[/dim]")
+    rprint("  [cyan]vpn disconnect all[/cyan]")
+    rprint()
+    rprint("[dim]Chaque commande accepte aussi [bold]--help[/bold] pour plus de détails.[/dim]")
+    rprint()
+
+
 # ── Interactive menu ─────────────────────────────────────────
 
 
@@ -328,20 +370,30 @@ def _interactive_menu() -> None:
         choice = typer.prompt("Votre choix", default="")
 
         if choice in ("c", "C"):
-            connect()
+            try:
+                connect()
+            except SystemExit:
+                pass
         elif choice in ("d", "D"):
-            disconnect()
+            try:
+                disconnect()
+            except SystemExit:
+                pass
         elif choice in ("s", "S"):
-            status()
+            try:
+                status()
+            except SystemExit:
+                pass
         elif choice in ("n", "N"):
-            configure()
+            try:
+                configure()
+            except SystemExit:
+                pass
         elif choice in ("q", "Q"):
             raise typer.Exit(0)
         elif choice.isdigit():
             entry = _resolve_entry(choice, entries)
             if entry:
-                # Quick-connect shortcut
-                app_connect_args = [choice]
                 try:
                     connect(target=choice)
                 except SystemExit:
