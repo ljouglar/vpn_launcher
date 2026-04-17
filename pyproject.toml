@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "vpn-manager"
+version = "2.0.0"
+description = "Multi-VPN manager for Linux — openfortivpn + SSH tunnels"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+]
+
+[project.scripts]
+vpn = "cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vpn_manager*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
