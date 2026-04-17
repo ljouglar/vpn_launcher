@@ -345,8 +345,6 @@ def show_help() -> None:
     rprint()
     rprint("[dim]Chaque commande accepte aussi [bold]--help[/bold] pour plus de détails.[/dim]")
     rprint()
-    if sys.stdout.isatty():
-        typer.pause("Appuyez sur Entrée pour continuer…")
 
 
 # ── Interactive menu ─────────────────────────────────────────
