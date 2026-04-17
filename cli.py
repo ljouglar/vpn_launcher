@@ -345,6 +345,8 @@ def show_help() -> None:
     rprint()
     rprint("[dim]Chaque commande accepte aussi [bold]--help[/bold] pour plus de détails.[/dim]")
     rprint()
+    if sys.stdout.isatty():
+        typer.pause("Appuyez sur Entrée pour continuer…")
 
 
 # ── Interactive menu ─────────────────────────────────────────
@@ -427,8 +429,8 @@ def _print_status_inline(entries: list[VpnEntry]) -> None:
 
 
 def main() -> None:
-    # Intercept 'help' before Click/Typer consumes it as a reserved word
-    if len(sys.argv) == 2 and sys.argv[1] == "help":
+    # Intercept 'help' / '--help' (no subcommand) before Click/Typer consumes them
+    if len(sys.argv) == 2 and sys.argv[1] in ("help", "--help", "-h"):
         sys.argv.pop(1)
         show_help()
         return
