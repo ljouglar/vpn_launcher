@@ -188,7 +188,6 @@ def disconnect(
         # Raw PID?
         if target.isdigit() and not any(e.id == target for e in entries):
             pid = int(target)
-            from .vpn_manager.session import _alive
             from vpn_manager.session import _alive as alive_check
             if alive_check(pid):
                 success = disc.disconnect_by_pid(pid, progress=_progress)
