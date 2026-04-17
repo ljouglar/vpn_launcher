@@ -364,12 +364,18 @@ def _interactive_menu() -> None:
         rprint("  d) Se déconnecter")
         rprint("  s) Statut")
         rprint("  n) Configurer un nouveau VPN")
+        rprint("  h) Aide")
         rprint("  q) Quitter")
         rprint()
 
         choice = typer.prompt("Votre choix", default="")
 
-        if choice in ("c", "C"):
+        if choice in ("h", "H", "?"):
+            try:
+                show_help()
+            except SystemExit:
+                pass
+        elif choice in ("c", "C"):
             try:
                 connect(target=None)
             except SystemExit:
@@ -421,6 +427,11 @@ def _print_status_inline(entries: list[VpnEntry]) -> None:
 
 
 def main() -> None:
+    # Intercept 'help' before Click/Typer consumes it as a reserved word
+    if len(sys.argv) == 2 and sys.argv[1] == "help":
+        sys.argv.pop(1)
+        show_help()
+        return
     app()
 
 
