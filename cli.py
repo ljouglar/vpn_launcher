@@ -371,12 +371,12 @@ def _interactive_menu() -> None:
 
         if choice in ("c", "C"):
             try:
-                connect()
+                connect(target=None)
             except SystemExit:
                 pass
         elif choice in ("d", "D"):
             try:
-                disconnect()
+                disconnect(target=None)
             except SystemExit:
                 pass
         elif choice in ("s", "S"):
