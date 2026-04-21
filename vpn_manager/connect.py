@@ -22,7 +22,7 @@ from typing import Callable, List, Optional
 
 from .config import CONFIG_DIR, LOG_DIR, get_timeout
 from .models import AuthType, VpnEntry
-from .session import is_connected, write_session, _alive
+from .session import is_connected, write_session, _alive, list_active_sessions
 
 # ── Browser helper ───────────────────────────────────────────
 
@@ -118,6 +118,29 @@ def _find_openfortivpn_pid_by_host(host: str) -> Optional[int]:
     return None
 
 
+def _find_single_untracked_openfortivpn_pid() -> Optional[int]:
+    """Return the unique untracked openfortivpn PID, or None if ambiguous."""
+    tracked_pids = {pid for _, pid in list_active_sessions()}
+    result = subprocess.run(
+        ["pgrep", "-x", "openfortivpn"],
+        capture_output=True,
+        text=True,
+    )
+    candidates: list[int] = []
+    for pid_str in result.stdout.splitlines():
+        try:
+            pid = int(pid_str.strip())
+        except ValueError:
+            continue
+        if pid in tracked_pids or not _alive(pid):
+            continue
+        candidates.append(pid)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def _find_ssh_tunnel_pid(local_port: int, remote_host: str, remote_port: int, ssh_user: str, ssh_host: str) -> Optional[int]:
     """Return the PID of the ssh process for the given tunnel parameters."""
     pattern = f"ssh.*-L {local_port}:{remote_host}:{remote_port}.*{ssh_user}@{ssh_host}"
@@ -172,6 +195,7 @@ def _wait_for_ppp(
     log_path: Path,
     timeout: int,
     progress: Callable[[str], None],
+    pid_finder: Optional[Callable[[], Optional[int]]] = None,
 ) -> bool:
     """Poll until a new ppp interface appears or *timeout* seconds elapse.
 
@@ -187,12 +211,27 @@ def _wait_for_ppp(
         True on successful connection, False otherwise.
     """
     for _ in range(timeout):
+        if vpn_pid is None and pid_finder is not None:
+            vpn_pid = pid_finder()
+
         ifaces_after = _ppp_interfaces()
         new_ifaces = [i for i in ifaces_after if i not in ifaces_before]
         if new_ifaces:
+            if vpn_pid is None and pid_finder is not None:
+                vpn_pid = pid_finder()
+            if vpn_pid is None:
+                vpn_pid = _find_single_untracked_openfortivpn_pid()
+
+            if vpn_pid is None:
+                progress(
+                    "❌ Connexion établie mais impossible d'associer le processus openfortivpn.\n"
+                    f"📝 Logs : {log_path}"
+                )
+                return False
+
             iface = new_ifaces[0]
             ip = _interface_ip(iface)
-            write_session(vpn_id, vpn_pid or 0)
+            write_session(vpn_id, vpn_pid)
             progress(f"✅ Connecté (IP: {ip}, interface: {iface})")
             return True
 
@@ -238,9 +277,18 @@ def connect_password(
     )
     time.sleep(2)
 
-    vpn_pid = _find_openfortivpn_pid(entry.forti_cfg.config_file)
+    pid_finder = lambda: _find_openfortivpn_pid(entry.forti_cfg.config_file)
+    vpn_pid = pid_finder()
     progress(f"🚀 Connexion à {entry.name}…")
-    return _wait_for_ppp(entry.id, vpn_pid, ifaces_before, log_path, get_timeout(entry), progress)
+    return _wait_for_ppp(
+        entry.id,
+        vpn_pid,
+        ifaces_before,
+        log_path,
+        get_timeout(entry),
+        progress,
+        pid_finder=pid_finder,
+    )
 
 
 def connect_2fa(
@@ -270,9 +318,18 @@ def connect_2fa(
     )
     time.sleep(2)
 
-    vpn_pid = _find_openfortivpn_pid(entry.forti_cfg.config_file)
+    pid_finder = lambda: _find_openfortivpn_pid(entry.forti_cfg.config_file)
+    vpn_pid = pid_finder()
     progress(f"🚀 Connexion à {entry.name} (2FA)…")
-    return _wait_for_ppp(entry.id, vpn_pid, ifaces_before, log_path, get_timeout(entry), progress)
+    return _wait_for_ppp(
+        entry.id,
+        vpn_pid,
+        ifaces_before,
+        log_path,
+        get_timeout(entry),
+        progress,
+        pid_finder=pid_finder,
+    )
 
 
 def connect_saml(
@@ -321,7 +378,8 @@ def connect_saml(
     subprocess.Popen(cmd, stdout=log_path.open("w"), stderr=subprocess.STDOUT)
     time.sleep(2)
 
-    vpn_pid = _find_openfortivpn_pid_by_host(host)
+    pid_finder = lambda: _find_openfortivpn_pid_by_host(host)
+    vpn_pid = pid_finder()
 
     # Wait for the SAML URL to appear in the log (up to 10 s)
     auth_url: Optional[str] = None
@@ -351,7 +409,15 @@ def connect_saml(
         progress("⚠️  Ouvrez l'URL ci-dessus manuellement dans votre navigateur")
 
     progress("\n⏳ En attente de l'authentification dans le navigateur…")
-    return _wait_for_ppp(entry.id, vpn_pid, ifaces_before, log_path, get_timeout(entry), progress)
+    return _wait_for_ppp(
+        entry.id,
+        vpn_pid,
+        ifaces_before,
+        log_path,
+        get_timeout(entry),
+        progress,
+        pid_finder=pid_finder,
+    )
 
 
 def connect_ssh(
