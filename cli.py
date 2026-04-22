@@ -2,23 +2,30 @@
 
 Usage examples::
 
-    vpn                      # interactive menu (default)
-    vpn connect              # interactive connect
-    vpn connect 1            # connect entry #1 directly
-    vpn connect my-vpn       # connect by ID
-    vpn disconnect           # interactive disconnect
-    vpn disconnect my-vpn    # disconnect by ID
-    vpn disconnect 2         # disconnect 2nd connected entry
-    vpn disconnect 322169    # disconnect by PID (untracked)
-    vpn disconnect all       # disconnect everything
-    vpn status               # show connection status
-    vpn list                 # list configured VPNs
-    vpn configure            # interactive setup wizard
-    vpn cleanup              # kill orphan processes
+    vpn                             # interactive menu (default)
+    vpn connect                     # interactive connect
+    vpn connect 1                   # connect entry #1 directly
+    vpn connect my-vpn              # connect by ID
+    vpn connect my-vpn --otp 123456 # connect with 2FA code
+    vpn connect my-vpn --yes        # skip confirmation prompts
+    vpn connect my-vpn --json       # machine-readable output
+    vpn disconnect                  # interactive disconnect
+    vpn disconnect my-vpn           # disconnect by ID
+    vpn disconnect my-vpn --yes     # skip cascade confirmation
+    vpn disconnect 2                # disconnect 2nd connected entry
+    vpn disconnect 322169           # disconnect by PID (untracked)
+    vpn disconnect all              # disconnect everything
+    vpn status                      # show connection status
+    vpn status --json               # machine-readable status
+    vpn list                        # list configured VPNs
+    vpn list --json                 # machine-readable VPN list
+    vpn configure                   # interactive setup wizard
+    vpn cleanup                     # kill orphan processes
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from typing import Optional
 
@@ -33,7 +40,7 @@ from vpn_manager import disconnect as disc
 from vpn_manager import status as st
 from vpn_manager.config import load_entries, get_entry_by_id, get_entry_by_index
 from vpn_manager.models import AuthType, VpnEntry
-from vpn_manager.session import attach_session_state
+from vpn_manager.session import attach_session_state, read_session
 
 app = typer.Typer(
     name="vpn",
@@ -44,6 +51,19 @@ app = typer.Typer(
 console = Console()
 
 # ── Shared helpers ───────────────────────────────────────────
+
+
+def _is_tty() -> bool:
+    """Return True when stdin is an interactive terminal."""
+    return sys.stdin.isatty()
+
+
+def _stderr_progress(msg: str) -> None:
+    """Progress printer that writes to stderr (used in --json mode)."""
+    if msg == ".":
+        print(".", end="", flush=True, file=sys.stderr)
+    else:
+        print(msg, file=sys.stderr)
 
 
 def _load() -> list[VpnEntry]:
@@ -102,19 +122,35 @@ def default(ctx: typer.Context) -> None:
         _interactive_menu()
 
 
-@app.command()
+@app.command(
+    epilog=(
+        "Examples:\n\n"
+        "  vpn connect 1\n"
+        "  vpn connect my-vpn\n"
+        "  vpn connect my-vpn --otp 123456\n"
+        "  vpn connect my-vpn --yes --json\n"
+    ),
+)
 def connect(
     target: Optional[str] = typer.Argument(
         None,
-        help="Index (1-N) ou ID du VPN à connecter. Menu interactif si absent.",
+        help="Index (1-N) ou ID du VPN à connecter. Obligatoire hors TTY.",
     ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirmer automatiquement (reconnexion, dépendances)."),
+    otp: Optional[str] = typer.Option(None, "--otp", help="Code OTP/FortiToken pour l'authentification 2FA."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée (pour agents/scripts)."),
 ) -> None:
     """Se connecter à un VPN ou tunnel SSH."""
+    progress = _stderr_progress if json_output else _progress
     entries = _load()
 
     if not entries:
-        rprint("[yellow]⚠️  Aucun VPN configuré.[/yellow]")
-        rprint("[blue]Utilisez 'vpn configure' pour en créer un.[/blue]")
+        if json_output:
+            print(json.dumps({"success": False, "error": "no_vpns_configured",
+                               "message": "Aucun VPN configuré. Utilisez 'vpn configure'."}))
+        else:
+            rprint("[yellow]⚠️  Aucun VPN configuré.[/yellow]")
+            rprint("[blue]Utilisez 'vpn configure' pour en créer un.[/blue]")
         raise typer.Exit(1)
 
     entry: Optional[VpnEntry] = None
@@ -122,9 +158,27 @@ def connect(
     if target is not None:
         entry = _resolve_entry(target, entries)
         if entry is None:
-            rprint(f"[red]❌ VPN introuvable : {target!r}[/red]")
+            valid_ids = ", ".join(f"{e.index}={e.id}" for e in entries)
+            if json_output:
+                print(json.dumps({"success": False, "error": "vpn_not_found", "target": target,
+                                   "available": [{"index": e.index, "id": e.id, "name": e.name} for e in entries]}))
+            else:
+                rprint(f"[red]❌ VPN introuvable : {target!r}[/red]")
+                rprint(f"[dim]VPNs disponibles : {valid_ids}[/dim]")
+                rprint(f"[dim]Usage : vpn connect <id|index>[/dim]")
             raise typer.Exit(1)
     else:
+        if not _is_tty():
+            valid_ids = ", ".join(f"{e.index}={e.id}" for e in entries)
+            if json_output:
+                print(json.dumps({"success": False, "error": "target_required",
+                                   "message": "Argument <target> requis en mode non-interactif.",
+                                   "available": [{"index": e.index, "id": e.id, "name": e.name} for e in entries]}))
+            else:
+                print("Error: <target> requis en mode non-interactif.", file=sys.stderr)
+                print("Usage: vpn connect <id|index>", file=sys.stderr)
+                print(f"VPNs disponibles : {valid_ids}", file=sys.stderr)
+            raise typer.Exit(1)
         _list_vpns(entries)
         choice = typer.prompt(f"\nChoisissez un VPN (1-{len(entries)})")
         entry = _resolve_entry(choice, entries)
@@ -133,23 +187,36 @@ def connect(
             raise typer.Exit(1)
 
     if entry.connected:
+        if json_output and not yes:
+            # En mode JSON non-interactif : connexion déjà active = succès idempotent
+            print(json.dumps({"success": True, "already_connected": True,
+                               "vpn_id": entry.id, "name": entry.name, "pid": entry.pid}))
+            raise typer.Exit(0)
         rprint(f"[yellow]⚠️  {entry.name} est déjà connecté.[/yellow]")
-        reconn = typer.confirm("Reconnecter ?", default=False)
+        reconn = yes or typer.confirm("Reconnecter ?", default=False)
         if reconn:
             disc.disconnect_entry(
                 entry, entries,
-                ask_cascade=lambda deps: typer.confirm(
+                ask_cascade=lambda deps: True if yes else typer.confirm(
                     f"Déconnecter les dépendances ({', '.join(deps)}) d'abord ?", default=True
                 ),
-                progress=_progress,
+                progress=progress,
             )
             import time; time.sleep(2)
         else:
             raise typer.Exit(0)
 
-    # Prompt for OTP if 2fa
-    otp_code: Optional[str] = None
-    if entry.auth == AuthType.TWO_FA:
+    # Resolve OTP for 2FA
+    otp_code: Optional[str] = otp
+    if entry.auth == AuthType.TWO_FA and not otp_code:
+        if not _is_tty():
+            if json_output:
+                print(json.dumps({"success": False, "error": "otp_required",
+                                   "message": "Code OTP requis pour ce VPN (2FA). Utilisez --otp <code>."}))
+            else:
+                print("Error: code OTP requis pour ce VPN (2FA).", file=sys.stderr)
+                print(f"Usage: vpn connect {entry.id} --otp <code>", file=sys.stderr)
+            raise typer.Exit(1)
         otp_code = typer.prompt("🔐 Code FortiToken")
         if not otp_code:
             rprint("[red]❌ Code FortiToken requis[/red]")
@@ -159,29 +226,50 @@ def connect(
         entry,
         entries,
         otp_code=otp_code,
-        ask_connect=lambda name: typer.confirm(f"Connecter la dépendance {name!r} d'abord ?", default=True),
-        progress=_progress,
+        ask_connect=lambda name: True if yes else typer.confirm(
+            f"Connecter la dépendance {name!r} d'abord ?", default=True
+        ),
+        progress=progress,
     )
+
+    if json_output:
+        pid = read_session(entry.id) if success else None
+        print(json.dumps({"success": success, "vpn_id": entry.id, "name": entry.name, "pid": pid}))
+
     raise typer.Exit(0 if success else 1)
 
 
-@app.command()
+@app.command(
+    epilog=(
+        "Examples:\n\n"
+        "  vpn disconnect my-vpn\n"
+        "  vpn disconnect all\n"
+        "  vpn disconnect my-vpn --yes --json\n"
+        "  vpn disconnect 12345          # par PID\n"
+    ),
+)
 def disconnect(
     target: Optional[str] = typer.Argument(
         None,
-        help="ID, index, PID ou 'all'. Menu interactif si absent.",
+        help="ID, index, PID ou 'all'. Obligatoire hors TTY.",
     ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirmer automatiquement les déconnexions en cascade."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée (pour agents/scripts)."),
 ) -> None:
     """Se déconnecter d'un VPN ou tunnel SSH."""
+    progress = _stderr_progress if json_output else _progress
     entries = _load()
 
     if target == "all" or target == "a":
         count = disc.disconnect_all(
             entries,
-            ask_cascade=lambda deps: True,  # "all" skips cascade prompt
-            progress=_progress,
+            ask_cascade=lambda deps: True,
+            progress=progress,
         )
-        rprint(f"[green]✅ {count} connexion(s) fermée(s)[/green]")
+        if json_output:
+            print(json.dumps({"success": True, "disconnected_count": count}))
+        else:
+            rprint(f"[green]✅ {count} connexion(s) fermée(s)[/green]")
         return
 
     if target is not None:
@@ -190,22 +278,47 @@ def disconnect(
             pid = int(target)
             from vpn_manager.session import _alive as alive_check
             if alive_check(pid):
-                success = disc.disconnect_by_pid(pid, progress=_progress)
+                success = disc.disconnect_by_pid(pid, progress=progress)
+                if json_output:
+                    print(json.dumps({"success": success, "pid": pid}))
                 raise typer.Exit(0 if success else 1)
 
         entry = _resolve_entry(target, entries)
         if entry is None:
-            rprint(f"[red]❌ VPN introuvable : {target!r}[/red]")
+            valid_ids = ", ".join(f"{e.index}={e.id}" for e in entries)
+            if json_output:
+                print(json.dumps({"success": False, "error": "vpn_not_found", "target": target,
+                                   "available": [{"index": e.index, "id": e.id, "name": e.name} for e in entries]}))
+            else:
+                rprint(f"[red]❌ VPN introuvable : {target!r}[/red]")
+                rprint(f"[dim]VPNs disponibles : {valid_ids}[/dim]")
+                rprint(f"[dim]Usage : vpn disconnect <id|index|pid|all>[/dim]")
             raise typer.Exit(1)
 
         success = disc.disconnect_entry(
             entry, entries,
-            ask_cascade=lambda deps: typer.confirm(
+            ask_cascade=lambda deps: True if yes else typer.confirm(
                 f"Déconnecter les dépendances ({', '.join(deps)}) d'abord ?", default=True
             ),
-            progress=_progress,
+            progress=progress,
         )
+        if json_output:
+            print(json.dumps({"success": success, "vpn_id": entry.id, "name": entry.name}))
         raise typer.Exit(0 if success else 1)
+
+    # No target — need interactive mode
+    if not _is_tty():
+        active = [e for e in entries if e.connected]
+        active_ids = ", ".join(f"{e.index}={e.id}" for e in active) if active else "aucune"
+        if json_output:
+            print(json.dumps({"success": False, "error": "target_required",
+                               "message": "Argument <target> requis en mode non-interactif.",
+                               "active": [{"index": e.index, "id": e.id, "name": e.name} for e in active]}))
+        else:
+            print("Error: <target> requis en mode non-interactif.", file=sys.stderr)
+            print("Usage: vpn disconnect <id|index|pid|all>", file=sys.stderr)
+            print(f"Connexions actives : {active_ids}", file=sys.stderr)
+        raise typer.Exit(1)
 
     # Interactive mode
     active = [e for e in entries if e.connected]
@@ -222,7 +335,7 @@ def disconnect(
     if len(active) == 1:
         disc.disconnect_entry(
             active[0], entries,
-            ask_cascade=lambda deps: typer.confirm(
+            ask_cascade=lambda deps: True if yes else typer.confirm(
                 f"Déconnecter les dépendances ({', '.join(deps)}) d'abord ?", default=True
             ),
             progress=_progress,
@@ -238,19 +351,48 @@ def disconnect(
 
     disc.disconnect_entry(
         entry, entries,
-        ask_cascade=lambda deps: typer.confirm(
+        ask_cascade=lambda deps: True if yes else typer.confirm(
             f"Déconnecter les dépendances ({', '.join(deps)}) d'abord ?", default=True
         ),
         progress=_progress,
     )
 
 
-@app.command()
-def status() -> None:
+@app.command(
+    epilog=(
+        "Examples:\n\n"
+        "  vpn status\n"
+        "  vpn status --json\n"
+    ),
+)
+def status(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée (pour agents/scripts)."),
+) -> None:
     """Afficher le statut de toutes les connexions."""
     entries = _load()
     connected_infos = st.get_connected(entries)
     untracked = st.get_untracked_processes()
+
+    if json_output:
+        result: dict = {"connected": [], "untracked": []}
+        for info in connected_infos:
+            e = info.entry
+            entry_data: dict = {"vpn_id": e.id, "name": e.name, "pid": info.pid, "type": e.auth.value}
+            if e.is_ssh_tunnel and e.ssh_cfg:
+                c = e.ssh_cfg
+                entry_data["local_port"] = c.local_port
+                entry_data["remote_host"] = c.remote_host
+                entry_data["remote_port"] = c.remote_port
+            else:
+                if info.ip:
+                    entry_data["ip"] = info.ip
+                if info.interface:
+                    entry_data["interface"] = info.interface
+            result["connected"].append(entry_data)
+        for proc in untracked:
+            result["untracked"].append({"pid": proc.pid, "cmdline": proc.cmdline, "ip": proc.ip})
+        print(json.dumps(result))
+        return
 
     if not connected_infos and not untracked:
         rprint("[red]❌ Aucune connexion VPN active[/red]")
@@ -278,10 +420,34 @@ def status() -> None:
         rprint("\n[yellow]💡 Utilisez 'vpn disconnect <pid>' pour déconnecter un processus non tracké[/yellow]")
 
 
-@app.command(name="list")
-def list_vpns() -> None:
+@app.command(
+    name="list",
+    epilog=(
+        "Examples:\n\n"
+        "  vpn list\n"
+        "  vpn list --json\n"
+        "  vpn list --json | jq '.[] | select(.connected)'"
+    ),
+)
+def list_vpns(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée (pour agents/scripts)."),
+) -> None:
     """Lister les VPNs configurés."""
     entries = _load()
+    if json_output:
+        result = []
+        for e in entries:
+            entry_data: dict = {
+                "index": e.index, "id": e.id, "name": e.name,
+                "type": e.auth.value, "connected": e.connected,
+            }
+            if e.pid:
+                entry_data["pid"] = e.pid
+            if e.depends_on:
+                entry_data["depends_on"] = e.depends_on
+            result.append(entry_data)
+        print(json.dumps(result))
+        return
     _list_vpns(entries)
 
 
@@ -314,12 +480,17 @@ def show_help() -> None:
     table.add_row("vpn", "Ouvre le menu interactif (par défaut)")
     table.add_row("vpn connect", "Menu interactif de connexion")
     table.add_row("vpn connect <id|n°>", "Connexion directe par ID ou numéro")
+    table.add_row("vpn connect <id> --otp <code>", "Connexion avec code 2FA/OTP")
+    table.add_row("vpn connect <id> --yes", "Connexion sans confirmation (reconnexion, dépendances)")
     table.add_row("vpn disconnect", "Menu interactif de déconnexion")
     table.add_row("vpn disconnect <id|n°>", "Déconnexion par ID ou numéro")
     table.add_row("vpn disconnect <pid>", "Déconnexion par PID (processus non tracké)")
     table.add_row("vpn disconnect all", "Déconnecter toutes les connexions actives")
+    table.add_row("vpn disconnect <id> --yes", "Déconnexion sans confirmation en cascade")
     table.add_row("vpn status", "Afficher l'état de toutes les connexions")
+    table.add_row("vpn status --json", "Statut en JSON (pour agents/scripts)")
     table.add_row("vpn list", "Lister les VPNs configurés")
+    table.add_row("vpn list --json", "Liste en JSON (pour agents/scripts)")
     table.add_row("vpn configure", "Assistant de création d'un nouveau VPN")
     table.add_row("vpn cleanup", "Supprimer les processus et interfaces orphelins")
     table.add_row("vpn help", "Afficher cette aide")
