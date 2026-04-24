@@ -470,6 +470,265 @@ def configure() -> None:
     run_wizard()
 
 
+# ── Profile sub-commands ─────────────────────────────────────
+
+profile_app = typer.Typer(
+    name="profile",
+    help="Gérer les profils VPN (groupes de connexions).",
+    no_args_is_help=False,
+    invoke_without_command=True,
+)
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.callback(invoke_without_command=True)
+def profile_default(ctx: typer.Context) -> None:
+    """Lister les profils si aucune sous-commande n'est fournie."""
+    if ctx.invoked_subcommand is None:
+        _cmd_profile_list(json_output=False)
+
+
+def _cmd_profile_list(json_output: bool) -> None:
+    from vpn_manager.profile import load_profiles
+
+    profiles = load_profiles()
+    entries = _load()
+
+    if json_output:
+        print(json.dumps([{"id": p.id, "name": p.name, "vpns": p.vpn_ids} for p in profiles]))
+        return
+
+    if not profiles:
+        rprint("[yellow]Aucun profil défini.[/yellow]")
+        rprint("[blue]💡 Utilisez 'vpn profile create' pour créer un profil.[/blue]")
+        return
+
+    rprint("[blue]Profils disponibles :[/blue]")
+    for p in profiles:
+        vpn_names = []
+        for vid in p.vpn_ids:
+            e = next((e for e in entries if e.id == vid), None)
+            vpn_names.append(e.name if e else f"[red]?{vid}[/red]")
+        rprint(f"  [cyan]{p.id}[/cyan]  {p.name}")
+        rprint(f"    [dim]{', '.join(vpn_names)}[/dim]")
+
+
+@profile_app.command(name="list")
+def profile_list(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée."),
+) -> None:
+    """Lister les profils définis."""
+    _cmd_profile_list(json_output)
+
+
+@profile_app.command(name="connect")
+def profile_connect(
+    profile_id: str = typer.Argument(..., help="ID du profil à connecter."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirmer automatiquement (reconnexion, dépendances)."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée."),
+) -> None:
+    """Connecter tous les VPNs d'un profil en une seule commande."""
+    from vpn_manager.profile import get_profile_by_id
+
+    profile = get_profile_by_id(profile_id)
+    if profile is None:
+        if json_output:
+            print(json.dumps({"success": False, "error": "profile_not_found", "profile_id": profile_id}))
+        else:
+            rprint(f"[red]❌ Profil introuvable : {profile_id!r}[/red]")
+            rprint("[dim]Utilisez 'vpn profile list' pour voir les profils disponibles.[/dim]")
+        raise typer.Exit(1)
+
+    progress = _stderr_progress if json_output else _progress
+    results: list[dict] = []
+    all_ok = True
+
+    if not json_output:
+        rprint(f"[blue]🔌 Connexion du profil [bold]{profile.name}[/bold]…[/blue]")
+
+    for vpn_id in profile.vpn_ids:
+        entries = _load()  # refresh live session state before each VPN
+        entry = next((e for e in entries if e.id == vpn_id), None)
+
+        if entry is None:
+            if not json_output:
+                rprint(f"  [red]❌ VPN {vpn_id!r} introuvable dans la configuration[/red]")
+            results.append({"vpn_id": vpn_id, "success": False, "error": "vpn_not_found"})
+            all_ok = False
+            continue
+
+        if entry.connected:
+            if not json_output:
+                rprint(f"  [yellow]⏭  {entry.name} — déjà connecté[/yellow]")
+            results.append({"vpn_id": vpn_id, "name": entry.name, "success": True, "already_connected": True})
+            continue
+
+        # Handle 2FA OTP
+        otp_code: Optional[str] = None
+        if entry.auth == AuthType.TWO_FA:
+            if not _is_tty():
+                if not json_output:
+                    rprint(f"  [yellow]⚠️  {entry.name} — ignoré (2FA requis, mode non-interactif)[/yellow]")
+                results.append({"vpn_id": vpn_id, "name": entry.name, "success": False, "error": "otp_required"})
+                all_ok = False
+                continue
+            otp_code = typer.prompt(f"  🔐 Code FortiToken pour {entry.name}")
+            if not otp_code:
+                rprint(f"  [red]❌ Code FortiToken requis pour {entry.name}[/red]")
+                results.append({"vpn_id": vpn_id, "name": entry.name, "success": False, "error": "otp_missing"})
+                all_ok = False
+                continue
+
+        if not json_output:
+            rprint(f"  → Connexion de [cyan]{entry.name}[/cyan]…")
+
+        success = conn.connect(
+            entry,
+            entries,
+            otp_code=otp_code,
+            ask_connect=lambda name: True,  # auto-accept depends_on in profile mode
+            progress=progress,
+        )
+
+        if not success:
+            all_ok = False
+        if not json_output:
+            if success:
+                rprint(f"  [green]✅ {entry.name}[/green]")
+            else:
+                rprint(f"  [red]❌ {entry.name} — échec de connexion[/red]")
+
+        results.append({"vpn_id": vpn_id, "name": entry.name, "success": success})
+
+    if json_output:
+        print(json.dumps({"profile_id": profile_id, "name": profile.name, "results": results, "all_ok": all_ok}))
+    elif all_ok:
+        rprint(f"\n[green]✅ Profil [bold]{profile.name}[/bold] connecté[/green]")
+    else:
+        rprint(f"\n[yellow]⚠️  Profil [bold]{profile.name}[/bold] — connexion partielle[/yellow]")
+
+    raise typer.Exit(0 if all_ok else 1)
+
+
+@profile_app.command(name="disconnect")
+def profile_disconnect(
+    profile_id: str = typer.Argument(..., help="ID du profil à déconnecter."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirmer automatiquement les déconnexions."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Sortie JSON structurée."),
+) -> None:
+    """Déconnecter tous les VPNs actifs d'un profil."""
+    from vpn_manager.profile import get_profile_by_id
+
+    profile = get_profile_by_id(profile_id)
+    if profile is None:
+        if json_output:
+            print(json.dumps({"success": False, "error": "profile_not_found", "profile_id": profile_id}))
+        else:
+            rprint(f"[red]❌ Profil introuvable : {profile_id!r}[/red]")
+        raise typer.Exit(1)
+
+    entries = _load()
+    progress = _stderr_progress if json_output else _progress
+    results: list[dict] = []
+
+    if not json_output:
+        rprint(f"[blue]🔌 Déconnexion du profil [bold]{profile.name}[/bold]…[/blue]")
+
+    # Disconnect in reverse order to respect depends_on chains
+    for vpn_id in reversed(profile.vpn_ids):
+        entry = next((e for e in entries if e.id == vpn_id), None)
+        if entry is None or not entry.connected:
+            continue
+
+        success = disc.disconnect_entry(
+            entry, entries,
+            ask_cascade=lambda deps: True,
+            progress=progress,
+        )
+        if not json_output:
+            if success:
+                rprint(f"  [green]✅ {entry.name} déconnecté[/green]")
+            else:
+                rprint(f"  [red]❌ {entry.name} — échec[/red]")
+        results.append({"vpn_id": vpn_id, "name": entry.name, "success": success})
+
+    if json_output:
+        print(json.dumps({"profile_id": profile_id, "name": profile.name, "results": results}))
+    elif not results:
+        rprint("[yellow]Aucun VPN actif dans ce profil.[/yellow]")
+
+
+@profile_app.command(name="create")
+def profile_create(
+    profile_id: Optional[str] = typer.Argument(None, help="ID du profil (ex: bureau, home)."),
+) -> None:
+    """Créer un nouveau profil interactivement."""
+    from vpn_manager.profile import save_profile as _save_profile
+    from vpn_manager.models import Profile
+
+    entries = _load()
+    if not entries:
+        rprint("[yellow]⚠️  Aucun VPN configuré. Utilisez 'vpn configure' d'abord.[/yellow]")
+        raise typer.Exit(1)
+
+    if not profile_id:
+        profile_id = typer.prompt("ID du profil (ex: bureau, home)")
+
+    if not profile_id or not profile_id.replace("-", "").replace("_", "").isalnum():
+        rprint("[red]❌ L'ID doit être alphanumérique (tirets et underscores autorisés).[/red]")
+        raise typer.Exit(1)
+
+    profile_name = typer.prompt("Nom affiché", default=profile_id.capitalize())
+
+    rprint("\n[blue]VPNs disponibles :[/blue]")
+    _list_vpns(entries)
+    rprint()
+
+    vpn_ids_raw = typer.prompt("IDs des VPNs à inclure (séparés par virgules ou espaces)")
+    vpn_ids = [v.strip() for v in vpn_ids_raw.replace(",", " ").split() if v.strip()]
+
+    valid_ids = {e.id for e in entries}
+    invalid = [v for v in vpn_ids if v not in valid_ids]
+    if invalid:
+        rprint(f"[red]❌ IDs inconnus : {', '.join(invalid)}[/red]")
+        raise typer.Exit(1)
+
+    if not vpn_ids:
+        rprint("[red]❌ Le profil doit contenir au moins un VPN.[/red]")
+        raise typer.Exit(1)
+
+    profile = Profile(id=profile_id, name=profile_name, vpn_ids=vpn_ids)
+    _save_profile(profile)
+
+    vpn_names = [next((e.name for e in entries if e.id == v), v) for v in vpn_ids]
+    rprint(f"\n[green]✅ Profil [bold]{profile_name}[/bold] créé avec {len(vpn_ids)} VPN(s) :[/green]")
+    for name in vpn_names:
+        rprint(f"   [dim]• {name}[/dim]")
+    rprint(f"\n[dim]Utilisation : vpn profile connect {profile_id}[/dim]")
+
+
+@profile_app.command(name="delete")
+def profile_delete(
+    profile_id: str = typer.Argument(..., help="ID du profil à supprimer."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Ne pas demander de confirmation."),
+) -> None:
+    """Supprimer un profil."""
+    from vpn_manager.profile import delete_profile as _delete_profile, get_profile_by_id
+
+    profile = get_profile_by_id(profile_id)
+    if profile is None:
+        rprint(f"[red]❌ Profil introuvable : {profile_id!r}[/red]")
+        raise typer.Exit(1)
+
+    if not yes:
+        confirmed = typer.confirm(f"Supprimer le profil {profile.name!r} ?", default=False)
+        if not confirmed:
+            raise typer.Exit(0)
+
+    _delete_profile(profile_id)
+    rprint(f"[green]✅ Profil {profile.name!r} supprimé[/green]")
+
+
 @app.command(name="help")
 def show_help() -> None:
     """Afficher l'aide détaillée des commandes disponibles."""
@@ -494,6 +753,13 @@ def show_help() -> None:
     table.add_row("vpn configure", "Assistant de création d'un nouveau VPN")
     table.add_row("vpn cleanup", "Supprimer les processus et interfaces orphelins")
     table.add_row("vpn help", "Afficher cette aide")
+    table.add_row("", "")
+    table.add_row("[bold]Profils[/bold]", "")
+    table.add_row("vpn profile", "Lister les profils définis")
+    table.add_row("vpn profile connect <id>", "Connecter tous les VPNs d'un profil")
+    table.add_row("vpn profile disconnect <id>", "Déconnecter tous les VPNs d'un profil")
+    table.add_row("vpn profile create", "Créer un nouveau profil interactivement")
+    table.add_row("vpn profile delete <id>", "Supprimer un profil")
 
     rprint()
     rprint("[bold blue]Gestionnaire VPN — Commandes disponibles[/bold blue]")
@@ -506,6 +772,9 @@ def show_help() -> None:
     rprint()
     rprint("  [dim]# Connexion par identifiant[/dim]")
     rprint("  [cyan]vpn connect mon-vpn[/cyan]")
+    rprint()
+    rprint("  [dim]# Connecter un profil entier d'un coup[/dim]")
+    rprint("  [cyan]vpn profile connect bureau[/cyan]")
     rprint()
     rprint("  [dim]# Voir le statut[/dim]")
     rprint("  [cyan]vpn status[/cyan]")
@@ -533,6 +802,7 @@ def _interactive_menu() -> None:
         rprint("  c) Se connecter")
         rprint("  d) Se déconnecter")
         rprint("  s) Statut")
+        rprint("  p) Connecter un profil")
         rprint("  n) Configurer un nouveau VPN")
         rprint("  h) Aide")
         rprint("  q) Quitter")
@@ -560,6 +830,11 @@ def _interactive_menu() -> None:
                 status()
             except SystemExit:
                 pass
+        elif choice in ("p", "P"):
+            try:
+                _profile_menu()
+            except SystemExit:
+                pass
         elif choice in ("n", "N"):
             try:
                 configure()
@@ -581,6 +856,35 @@ def _interactive_menu() -> None:
 
         if choice not in ("q", "Q"):
             typer.pause("\nAppuyez sur Entrée pour continuer…")
+
+
+def _profile_menu() -> None:
+    """Sub-menu interactif pour connecter un profil depuis le menu principal."""
+    from vpn_manager.profile import load_profiles
+
+    entries = _load()
+    profiles = load_profiles()
+
+    if not profiles:
+        rprint("[yellow]Aucun profil défini.[/yellow]")
+        rprint("[blue]💡 Utilisez 'vpn profile create' pour créer un profil.[/blue]")
+        return
+
+    rprint("[blue]Profils disponibles :[/blue]")
+    for i, p in enumerate(profiles, 1):
+        vpn_names = [next((e.name for e in entries if e.id == v), f"?{v}") for v in p.vpn_ids]
+        rprint(f"  {i}) [cyan]{p.name}[/cyan]  [dim]({', '.join(vpn_names)})[/dim]")
+    rprint()
+
+    choice = typer.prompt(f"Connecter quel profil ? (1-{len(profiles)})")
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(profiles):
+            profile_connect(profiles[idx].id)
+        else:
+            rprint("[red]❌ Choix invalide[/red]")
+    except ValueError:
+        rprint("[red]❌ Choix invalide[/red]")
 
 
 def _print_status_inline(entries: list[VpnEntry]) -> None:

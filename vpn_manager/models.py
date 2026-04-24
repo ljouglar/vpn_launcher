@@ -117,3 +117,18 @@ class VpnEntry:
     def __repr__(self) -> str:  # pragma: no cover
         state = "✅" if self.connected else "○"
         return f"VpnEntry({state} {self.id!r} auth={self.auth.value})"
+
+
+@dataclass
+class Profile:
+    """A named group of VPN IDs to connect/disconnect together.
+
+    Attributes:
+        id:       Unique machine identifier (INI section name), e.g. "bureau".
+        name:     Human-readable display name.
+        vpn_ids:  Ordered list of VpnEntry IDs to connect as a group.
+    """
+
+    id: str
+    name: str
+    vpn_ids: list[str] = field(default_factory=list)
