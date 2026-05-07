@@ -58,7 +58,8 @@ except Exception:
 from vpn_manager import config as _cfg
 from vpn_manager import disconnect as _disc
 from vpn_manager.config import load_entries
-from vpn_manager.models import VpnEntry
+from vpn_manager.models import Profile, VpnEntry
+from vpn_manager.profile import load_profiles
 from vpn_manager.session import attach_session_state
 from vpn_manager.status import count_connected
 
@@ -255,6 +256,32 @@ class VpnTray:
 
         menu.append(Gtk.SeparatorMenuItem())
 
+        # ── Profiles section ───────────────────────────────────
+        profiles = load_profiles()
+        if profiles:
+            prof_header = Gtk.MenuItem(label="  📋  Profils")
+            prof_header.set_sensitive(False)
+            menu.append(prof_header)
+
+            for profile in profiles:
+                connected_vpns = [e for e in entries if e.id in profile.vpn_ids and e.connected]
+                all_connected = len(connected_vpns) == len(profile.vpn_ids)
+                any_connected = len(connected_vpns) > 0
+
+                if all_connected:
+                    bullet = "●"
+                elif any_connected:
+                    bullet = "◐"
+                else:
+                    bullet = "○"
+
+                label = f"  {bullet} {profile.name}"
+                item = Gtk.MenuItem(label=label)
+                item.connect("activate", self._on_toggle_profile, profile, entries)
+                menu.append(item)
+
+            menu.append(Gtk.SeparatorMenuItem())
+
         if connected_count > 1:
             da = Gtk.MenuItem(label="  Tout déconnecter")
             da.connect("activate", self._on_disconnect_all, entries)
@@ -288,6 +315,24 @@ class VpnTray:
             self._open_connect_terminal(entry)
             GLib.timeout_add_seconds(10, self._update_once)
 
+    def _on_toggle_profile(self, _widget, profile: Profile, entries: List[VpnEntry]) -> None:
+        """Connect or disconnect all VPNs in a profile.
+
+        If any VPN of the profile is currently connected, disconnect the whole
+        profile inline (no terminal needed). Otherwise open a terminal to run
+        the interactive connect flow (2FA / SAML may be required).
+        """
+        connected_vpns = [e for e in entries if e.id in profile.vpn_ids and e.connected]
+        if connected_vpns:
+            # Disconnect in reverse order to respect dependency chains
+            for entry in reversed([e for e in entries if e.id in profile.vpn_ids]):
+                if entry.connected:
+                    _disc.disconnect_entry(entry, entries, ask_cascade=lambda _deps: True)
+            GLib.timeout_add_seconds(4, self._update_once)
+        else:
+            self._open_profile_connect_terminal(profile)
+            GLib.timeout_add_seconds(10, self._update_once)
+
     def _on_disconnect_all(self, _widget, entries: List[VpnEntry]) -> None:
         _disc.disconnect_all(entries, ask_cascade=lambda _deps: True)
         GLib.timeout_add_seconds(5, self._update_once)
@@ -306,6 +351,18 @@ class VpnTray:
             return
         cmd = (
             f'"{self._cli}" connect {entry.index}; '
+            'echo ""; echo "Appuyez sur Entrée pour fermer…"; read'
+        )
+        subprocess.Popen(terminal + ["bash", "-c", cmd])
+
+    def _open_profile_connect_terminal(self, profile: Profile) -> None:
+        """Open a terminal to run the interactive profile connect flow."""
+        terminal = _find_terminal()
+        if not terminal or not self._cli:
+            _notify("VPN Tray", f"Impossible d'ouvrir un terminal pour le profil {profile.name}")
+            return
+        cmd = (
+            f'"{self._cli}" profile connect {profile.id}; '
             'echo ""; echo "Appuyez sur Entrée pour fermer…"; read'
         )
         subprocess.Popen(terminal + ["bash", "-c", cmd])
