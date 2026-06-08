@@ -316,22 +316,17 @@ class VpnTray:
             GLib.timeout_add_seconds(10, self._update_once)
 
     def _on_toggle_profile(self, _widget, profile: Profile, entries: List[VpnEntry]) -> None:
-        """Connect or disconnect all VPNs in a profile.
+        """Connect missing VPNs in a profile.
 
-        If any VPN of the profile is currently connected, disconnect the whole
-        profile inline (no terminal needed). Otherwise open a terminal to run
-        the interactive connect flow (2FA / SAML may be required).
+        If the profile is already fully connected, do nothing — use the
+        "Disconnect all" menu item to tear down. Otherwise open a terminal
+        to run the connect flow; the CLI skips VPNs that are already up.
         """
-        connected_vpns = [e for e in entries if e.id in profile.vpn_ids and e.connected]
-        if connected_vpns:
-            # Disconnect in reverse order to respect dependency chains
-            for entry in reversed([e for e in entries if e.id in profile.vpn_ids]):
-                if entry.connected:
-                    _disc.disconnect_entry(entry, entries, ask_cascade=lambda _deps: True)
-            GLib.timeout_add_seconds(4, self._update_once)
-        else:
-            self._open_profile_connect_terminal(profile)
-            GLib.timeout_add_seconds(10, self._update_once)
+        profile_entries = [e for e in entries if e.id in profile.vpn_ids]
+        if all(e.connected for e in profile_entries):
+            return  # already fully up — use "Disconnect all" to tear down
+        self._open_profile_connect_terminal(profile)
+        GLib.timeout_add_seconds(10, self._update_once)
 
     def _on_disconnect_all(self, _widget, entries: List[VpnEntry]) -> None:
         _disc.disconnect_all(entries, ask_cascade=lambda _deps: True)
