@@ -27,12 +27,12 @@ from .session import is_connected, write_session, _alive, list_active_sessions
 # ── Browser helper ───────────────────────────────────────────
 
 _BROWSER_COMMANDS = [
-    "xdg-open",
-    "gnome-open",
-    "kde-open",
     "firefox",
     "google-chrome",
     "chromium",
+    "xdg-open",
+    "gnome-open",
+    "kde-open",
 ]
 
 
