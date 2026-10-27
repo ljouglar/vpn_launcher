@@ -100,6 +100,16 @@ openfortivpn --version
 
 ## 🚀 Installation du VPN Manager
 
+### Dépendances Python
+
+Python 3.11 ou plus récent, avec `typer` et `rich` :
+
+```bash
+sudo apt install python3-typer python3-rich
+```
+
+### Installation
+
 ```bash
 # Cloner le dépôt, au choix depuis :
 # - GitHub
@@ -109,35 +119,38 @@ git clone git@git.koesio.io:kam-lyon/vpn_launcher.git
 
 cd vpn_launcher
 
-# Lancer l'installation
-./install.sh
+# Créer la commande `vpn` dans ~/.local/bin (qui pointe vers le dépôt cloné)
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/vpn <<EOF
+#!/usr/bin/env bash
+exec /usr/bin/python3 "$PWD/cli.py" "\$@"
+EOF
+chmod +x ~/.local/bin/vpn
+
+# Vérifier
+vpn help
 ```
 
-Le script va :
-- ✅ Vérifier que `openfortivpn` est installé
-- ✅ Créer la structure de dossiers `~/.vpn/`
-- ✅ Créer un lien symbolique `~/vpn` vers le script
-- ✅ Créer des fichiers de configuration template
-- ✅ Créer un README avec toute la documentation
+Le premier lancement de `vpn` (menu, `vpn configure`, `vpn list`…) crée automatiquement la structure `~/.vpn/` :
 
-**Note** : `~/vpn` est un lien symbolique vers le dépôt cloné, ce qui permet de mettre à jour facilement.
-
-Après installation, consultez la documentation complète :
-```bash
-cat ~/.vpn/README.md
 ```
+~/.vpn/
+├── vpns.conf     # Déclaration des VPN (chmod 600)
+├── configs/      # Fichiers .conf openfortivpn / tunnels SSH
+├── sessions/     # Sessions actives
+└── logs/         # Logs de connexion
+```
+
+**Note** : la commande `vpn` exécute directement le code du dépôt cloné : ne déplacez pas le dossier après l'installation (ou relancez l'étape `cat > ~/.local/bin/vpn` depuis le nouvel emplacement).
 
 ## 🔄 Mise à jour
 
 ```bash
-# Se rendre dans le dépôt cloné
-cd vpn_launcher
-
-# Mettre à jour
+# Depuis le dépôt cloné
 git pull
-
-# Le script ~/vpn est automatiquement à jour (lien symbolique)
 ```
+
+La commande `vpn` utilise immédiatement la nouvelle version.
 
 ## 🔧 Configuration d'un VPN
 
@@ -146,7 +159,7 @@ git pull
 La façon la plus simple de configurer un VPN est d'utiliser l'assistant intégré :
 
 ```bash
-~/vpn configure
+vpn configure
 ```
 
 L'assistant vous guidera pas à pas pour :
@@ -229,7 +242,7 @@ remote_port = 3306
 ### 4. Tester
 
 ```bash
-~/vpn
+vpn
 ```
 
 ## �️ Tray Icon (Ubuntu)
@@ -242,15 +255,6 @@ Un indicateur dans la barre système permet de piloter vos VPN sans terminal :
 - **Notifications** : alertes à la connexion et déconnexion
 - **Autostart** : se lance automatiquement à l'ouverture de session
 
-### Installation
-
-```bash
-# Depuis le dépôt cloné
-./tray/install_tray.sh
-```
-
-Ou lors de l'installation principale (`./install.sh`), l'assistant propose d'installer le tray.
-
 ### Dépendances
 
 ```bash
@@ -260,32 +264,50 @@ sudo apt install gir1.2-appindicator3-0.1 python3-gi python3-gi-cairo
 ### Lancement manuel
 
 ```bash
-python3 ~/.vpn/tray/vpn_tray.py &
+# Depuis le dépôt cloné
+./tray/vpn_tray_launch.sh &
+```
+
+### Lancement automatique à l'ouverture de session
+
+```bash
+# Depuis le dépôt cloné
+mkdir -p ~/.config/autostart
+cat > ~/.config/autostart/vpn-tray.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=VPN Tray
+Comment=Indicateur système pour gérer les connexions VPN
+Exec=$PWD/tray/vpn_tray_launch.sh
+Icon=network-vpn
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
 ```
 
 ## �💡 Exemples d'utilisation
 
 ```bash
 # Menu interactif
-~/vpn
+vpn
 
 # Créer un nouveau VPN (assistant interactif)
-~/vpn configure
+vpn configure
 
 # Connexion directe au VPN #1
-~/vpn connect 1
+vpn connect 1
 
 # Voir le statut
-~/vpn status
+vpn status
 
 # Lister les VPNs
-~/vpn list
+vpn list
 
 # Se déconnecter
-~/vpn disconnect
+vpn disconnect
 
 # Aide
-~/vpn help
+vpn help
 ```
 
 ## 🔐 Sécurité
@@ -297,12 +319,13 @@ python3 ~/.vpn/tray/vpn_tray.py &
 
 ## 🆘 Support
 
-### Le script vpn n'est pas trouvé après installation
+### La commande vpn n'est pas trouvée après installation
 
-Soit :
-- Utilisez le chemin complet : `~/vpn`
-- Ajoutez `~/` au PATH (l'installeur le propose)
-- Relancez un nouveau terminal après avoir sourcé `.bashrc`
+`~/.local/bin` n'est pas dans votre `PATH`. Sur Ubuntu, il y est ajouté automatiquement par `~/.profile` dès que le dossier existe : ouvrez une nouvelle session. Sinon, ajoutez à votre `~/.bashrc` :
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
 ### L'authentification SAML/SSO ne fonctionne pas
 
@@ -325,24 +348,23 @@ Le script détecte et affiche les processus VPN non trackés. Pour nettoyer :
 
 ```bash
 # Déconnecter un processus par son PID
-~/vpn disconnect <PID>
+vpn disconnect <PID>
 
 # Déconnecter tous les VPN
-~/vpn disconnect all
+vpn disconnect all
 ```
 
 ### Problèmes de connexion
 
-Consultez les logs :
+Consultez les logs (un fichier par VPN) :
 ```bash
-tail -f ~/.vpn/logs/vpn.log
+tail -f ~/.vpn/logs/<id-du-vpn>.log
 ```
 
 ### Aide complète
 
 ```bash
-~/vpn help
-cat ~/.vpn/README.md
+vpn help
 ```
 
 ## 📄 Licence
