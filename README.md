@@ -101,8 +101,12 @@ openfortivpn --version
 ## 🚀 Installation du VPN Manager
 
 ```bash
-# Cloner le dépôt
+# Cloner le dépôt, au choix depuis :
+# - GitHub
 git clone https://github.com/ljouglar/vpn_launcher.git
+# - GitLab Koesio (accès réservé aux collaborateurs Koesio)
+git clone git@git.koesio.io:kam-lyon/vpn_launcher.git
+
 cd vpn_launcher
 
 # Lancer l'installation
